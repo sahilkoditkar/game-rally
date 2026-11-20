@@ -607,3 +607,5 @@ body.touch .rpm { width: 90px; }
 .ghost-saved { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 3px; background: #3a4766; color: #e3ebff; font-size: 12px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
 .menu-actions .toggle { padding: 0 12px; font-size: 14px; }
 .menu-actions .toggle[aria-pressed="false"] { opacity: .6; }
+.menu-actions .btn.ghost { white-space: nowrap; padding: 0 12px; font-size: 14px; }
+.menu-actions .big { flex: 1 1 auto; min-width: 0; padding: 0 16px; }
