@@ -313,34 +313,34 @@ export class Car {
       const fast = clamp((speed - 9) / 6, 0, 1);
       const turning = Math.abs(sN) > 0.4;
       let d = this.drift;
-      if (prevThr > 0.6 && thr < 0.2 && turning) d = Math.max(d, 0.55 * fast);       // lift-off oversteer
-      if (brk > 0.3 && vf > 1 && turning) d += (0.5 * brk * fast - d) * Math.min(1, 3 * dt) * (d < 0.5 * brk * fast ? 1 : 0); // trail-brake rotation
+      if (prevThr > 0.3 && thr < 0.2 && Math.abs(sN) > 0.7 && d < 0.7 * fast) d += 2.2 * fast * dt; // sustained lift-off oversteer
+      if (brk > 0.3 && vf > 1 && turning && d < 0.4 * brk * fast) d += (0.4 * brk * fast - d) * Math.min(1, 3 * dt); // trail-brake rotation
       if (hand && speed > 4) d += (1 - d) * Math.min(1, 6 * dt);                        // handbrake
-      if (thr > 0.8 && turning && speed > 7) d += thr * (1.1 - grip) * (this.gear <= 2 ? 1.4 : 0.7) * dt; // power oversteer on loose surfaces
-      const holding = thr > 0.4 && Math.abs(beta) > 0.1 && turning && Math.sign(sN) === Math.sign(this.yawRate);
+      if (thr > 0.8 && Math.abs(sN) > 0.7 && speed > 7) d += thr * Math.max(0, 1.05 - grip) * (this.gear <= 2 ? 1.2 : 0.5) * dt; // power oversteer on loose surfaces
+      const holding = d > 0.25 && thr > 0.4 && Math.abs(beta) > 0.1 && turning && Math.sign(sN) === Math.sign(this.yawRate);
       if (holding && !hand) d = Math.max(d, Math.min(this.drift, 0.6)) - 0.08 * dt;
-      else if (!hand) d *= Math.exp(-(sN === 0 ? 2.8 : 1.6) * dt);
+      else if (!hand) d *= Math.exp(-(sN === 0 ? 2.8 : Math.sign(sN) !== Math.sign(this.yawRate) ? 3.5 : 1.6) * dt);
       this.drift = d = clamp(d, 0, 1);
 
       // ---- lateral grip with traction circle ----
-      const use = Math.min(1, longUse / (13 * grip));
-      let maxLat = baseLat * (1 - 0.3 * use * use) * (1 - 0.2 * d);
-      if (hand) maxLat *= 0.45;
-      if (thr > 0.5 && Math.abs(vl) > 1.5) maxLat *= 0.9;
+      const use = Math.min(1, longUse / 16);
+      let maxLat = baseLat * (1 - 0.25 * use * use) * (1 - 0.2 * d);
+      if (hand) maxLat *= 0.55;
+      if (thr > 0.5 && d > 0.2 && Math.abs(vl) > 1.5) maxLat *= 0.9;
       aLat = clamp(-vl * 14, -maxLat, maxLat);
       vl += aLat * dt;
 
       // ---- yaw: proportional to steering, speed-limited near the grip limit ----
       const av = Math.max(Math.abs(vf), 4);
       const wKin = Math.abs(vf) * Math.tan(maxSteer) / WB;
-      const wGrip = baseLat / av * (1.06 + 0.95 * d + (hand ? 0.6 : 0));
+      const wGrip = baseLat / av * (1.06 + 1.5 * d + (hand ? 1.8 : 0));
       const wMax = Math.min(wKin * (hand ? 1.35 : 1), wGrip);
       let target = sN * wMax * Math.sign(vf || 1);
       // self-aligning toward the velocity; weaker while the slide is held on throttle,
       // stronger (counter-steer assist) when the player isn't steering into the slide
       const intoSlide = sN !== 0 && Math.sign(sN) === -Math.sign(beta);
-      let align = 1.6 - 0.7 * d * thr;
-      if (!intoSlide) align += 1.2;
+      let align = hand ? 0.5 : 1.45 - 0.8 * d * thr;
+      if (!intoSlide && !hand) align += 1.2;
       target += beta * align * Math.min(1, speed / 3);
       // anti-spin: hard limit on slide angle
       const bLim = hand ? 1.2 : 0.75;
@@ -450,7 +450,7 @@ export class Car {
         this.vx = tvn * nx + tx * keep; this.vz = tvn * nz + tz * keep;
         // yaw from the off-centre hit, bounded
         const cross = (fx * arm) * nz - (fz * arm) * nx; // r x n (y component sign)
-        this.yawRate = clamp(this.yawRate - cross * jn * 0.12, -2.5, 2.5);
+        this.yawRate = clamp(this.yawRate - cross * jn * 0.08, -2, 2);
         this.drift *= 0.5;
         const lost = before - Math.hypot(this.vx, this.vz);
         if (lost > 0.5) this.impact = Math.max(this.impact, lost);
