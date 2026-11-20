@@ -9,7 +9,7 @@ export const ROAD_HALF = 3.6;
 // Conditions: night, rain (bools), lightIntensity { sun, ambient } multipliers (default 1/1).
 // Coast only: seaLevel (absolute y of the sea plane), sea (colour), sand (beach colour).
 // Desert extras (optional): cactus / mesa (scenery mix shares), mesaH (mesa height scale), dens (density threshold).
-// par: autopilot reference time in seconds (baked, see stages/par.mjs harness).
+// par: reference time in seconds = the car.js autopilot at dt 1/120, start gate to finish gate (baked offline).
 export const STAGES = [
   // ---------------------------------------------------------------- forest
   {
@@ -23,7 +23,7 @@ export const STAGES = [
   {
     id: 'mossbrook', name: 'Mossbrook Run', tag: 'Forest rain · wet gravel', seed: 58, points: 34,
     twist: 1.05, sharp: 0.24, hills: 14, grip: 0.85, flora: 'forest',
-    region: 'forest', night: false, rain: true, par: null,
+    region: 'forest', night: false, rain: true, par: 81.4,
     sky: ['#6f7b80', '#aeb8b4'], fog: '#a3ada9', fogRange: [40, 230],
     ground: ['#56743a', '#6b7f3c', '#45663a'], rock: '#6f716c', verge: '#7a6d4f',
     road: ['#8f7a5c', '#7d6a4f'], dust: '#5c5a52', sun: '#d9e0e0', sunPos: [30, 80, 20], ambient: ['#b9c6c8', '#55583f'],
@@ -31,7 +31,7 @@ export const STAGES = [
   {
     id: 'owlcrest', name: 'Owlcrest by Night', tag: 'Forest night · headlights', seed: 77, points: 38,
     twist: 1.15, sharp: 0.26, hills: 18, grip: 0.95, flora: 'forest',
-    region: 'forest', night: true, rain: false, par: null, lightIntensity: { sun: 0.25, ambient: 0.45 },
+    region: 'forest', night: true, rain: false, par: 96.4, lightIntensity: { sun: 0.25, ambient: 0.45 },
     sky: ['#03060f', '#1a2742'], fog: '#111a2d', fogRange: [25, 190],
     ground: ['#5f7f52', '#728c58', '#4f7050'], rock: '#7d8590', verge: '#9a9070',
     road: ['#c9b48f', '#b9a37e'], dust: '#8a8a8a', sun: '#b9cdff', sunPos: [-40, 60, 50], ambient: ['#8ea6e0', '#2c3550'],
@@ -48,7 +48,7 @@ export const STAGES = [
   {
     id: 'ember', name: 'Ember Flats', tag: 'Desert dusk · fast sweepers', seed: 91, points: 48,
     twist: 0.6, sharp: 0.12, hills: 9, grip: 1.08, flora: 'desert',
-    region: 'desert', night: false, rain: false, par: null,
+    region: 'desert', night: false, rain: false, par: 107.7,
     sky: ['#4b4f8f', '#ff9a5c'], fog: '#f29a68', fogRange: [80, 360],
     ground: ['#c9774a', '#d98c55', '#b8653f'], rock: '#8e4434', verge: '#d8915e',
     road: ['#e9b884', '#d9a573'], dust: '#efb98a', sun: '#ffb070', sunPos: [-80, 18, 60], ambient: ['#ffc2a0', '#7a3f3a'],
@@ -56,7 +56,7 @@ export const STAGES = [
   {
     id: 'redcleft', name: 'Redcleft Gorge', tag: 'Canyon · tight and technical', seed: 104, points: 26,
     twist: 1.3, sharp: 0.42, hills: 12, grip: 1.02, flora: 'desert',
-    region: 'desert', night: false, rain: false, par: null, cactus: 0.18, mesa: 0.52, mesaH: 1.8, dens: 0.5,
+    region: 'desert', night: false, rain: false, par: 75.6, cactus: 0.18, mesa: 0.52, mesaH: 1.8, dens: 0.5,
     sky: ['#5f86c4', '#f3c7a0'], fog: '#e9b893', fogRange: [70, 320],
     ground: ['#c4683f', '#d27f4f', '#b05a3a'], rock: '#93412f', verge: '#cf8f63',
     road: ['#e7c194', '#d8ae80'], dust: '#ebc39a', sun: '#ffe0b8', sunPos: [40, 75, -20], ambient: ['#ffd3b4', '#8c4632'],
@@ -65,7 +65,7 @@ export const STAGES = [
   {
     id: 'glimmer', name: 'Glimmerfield Sprint', tag: 'Bluebird day · packed snow', seed: 133, points: 28,
     twist: 0.9, sharp: 0.2, hills: 16, grip: 0.88, flora: 'snow',
-    region: 'snow', night: false, rain: false, par: null,
+    region: 'snow', night: false, rain: false, par: 63.1,
     sky: ['#2f76d2', '#cfe6fb'], fog: '#d8e9f8', fogRange: [90, 380],
     ground: ['#f7fafd', '#e8f0f8', '#dbe7f2'], rock: '#6d7b8c', verge: '#dfe8f0',
     road: ['#c9d3dd', '#b6c3cf'], dust: '#f7fafd', sun: '#fffaf0', sunPos: [70, 60, 20], ambient: ['#d4e6ff', '#7c8ba3'],
@@ -81,7 +81,7 @@ export const STAGES = [
   {
     id: 'lanternfell', name: 'Lanternfell Night', tag: 'Snow at night · ice ruts', seed: 151, points: 36,
     twist: 1.15, sharp: 0.25, hills: 22, grip: 0.7, flora: 'snow',
-    region: 'snow', night: true, rain: false, par: null, lightIntensity: { sun: 0.25, ambient: 0.45 },
+    region: 'snow', night: true, rain: false, par: 99.4, lightIntensity: { sun: 0.25, ambient: 0.45 },
     sky: ['#040814', '#1b2a4a'], fog: '#142038', fogRange: [30, 210],
     ground: ['#e9eef6', '#d9e2ee', '#c9d5e4'], rock: '#5c6676', verge: '#cdd7e3',
     road: ['#aeb9c8', '#9caabb'], dust: '#dfe6f0', sun: '#c4d4ff', sunPos: [-50, 55, 40], ambient: ['#8ea4d8', '#2e3a55'],
@@ -90,15 +90,15 @@ export const STAGES = [
   {
     id: 'brightwater', name: 'Brightwater Cove', tag: 'Sunlit coast · limestone', seed: 167, points: 32,
     twist: 0.85, sharp: 0.18, hills: 9, grip: 1.04, flora: 'coast',
-    region: 'coast', night: false, rain: false, par: null, seaLevel: 0, sea: '#2aa39b', sand: '#efe2bd',
+    region: 'coast', night: false, rain: false, par: 81.1, seaLevel: 0, sea: '#2aa39b', sand: '#efe2bd',
     sky: ['#4f9ed8', '#d9f0f2'], fog: '#d4ecee', fogRange: [90, 380],
-    ground: ['#cfc893', '#bdbb7f', '#a3a56c'], rock: '#e6e1d4', verge: '#e4dabd',
+    ground: ['#c4c58a', '#b0b778', '#97a266'], rock: '#e6e1d4', verge: '#e4dabd',
     road: ['#f1e9d4', '#e3d8bd'], dust: '#efe6d0', sun: '#fff4dc', sunPos: [60, 70, -30], ambient: ['#d6eef5', '#9c9470'],
   },
   {
     id: 'saffron', name: 'Saffron Cape', tag: 'Coast sunset · dry hardpack', seed: 181, points: 40,
     twist: 1.0, sharp: 0.26, hills: 11, grip: 1.0, flora: 'coast',
-    region: 'coast', night: false, rain: false, par: null, seaLevel: 0, sea: '#24727f', sand: '#f0cf9e',
+    region: 'coast', night: false, rain: false, par: 103.5, seaLevel: 0, sea: '#24727f', sand: '#f0cf9e',
     sky: ['#4a5a9e', '#ffb17a'], fog: '#f4b98c', fogRange: [80, 360],
     ground: ['#b89d5e', '#a3985b', '#8a8a50'], rock: '#ecd8c0', verge: '#e8cf9f',
     road: ['#f0dcb8', '#e2caa2'], dust: '#efcfa6', sun: '#ffbf80', sunPos: [70, 20, 50], ambient: ['#ffcfae', '#7d5a48'],
@@ -106,7 +106,7 @@ export const STAGES = [
   {
     id: 'gullrock', name: 'Gullrock Squall', tag: 'Coast rain · slick limestone', seed: 199, points: 44,
     twist: 1.15, sharp: 0.3, hills: 12, grip: 0.86, flora: 'coast',
-    region: 'coast', night: false, rain: true, par: null, seaLevel: 0, sea: '#2d5f63', sand: '#b9b29a',
+    region: 'coast', night: false, rain: true, par: 115.3, seaLevel: 0, sea: '#2d5f63', sand: '#b9b29a',
     sky: ['#5f6c73', '#a9b4b4'], fog: '#9aa6a7', fogRange: [40, 230],
     ground: ['#9aa07a', '#8a9468', '#76845a'], rock: '#c9c8bf', verge: '#9b9479',
     road: ['#8f897a', '#7f7a6c'], dust: '#5f625d', sun: '#dde3e3', sunPos: [-30, 80, 10], ambient: ['#bcc8cb', '#5a5a48'],

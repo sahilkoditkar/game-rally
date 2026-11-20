@@ -10,7 +10,7 @@ import { store, getBest, setBest } from './storage.js';
 import { REGIONS, menuIds, getDef, regionOf, nextId, isDaily, dailyDef, conditions } from './catalog.js';
 import { Dust, Rain } from './fx.js';
 import { Player, CAMS, paintKey, updateCamera, aimSun } from './player.js';
-import { showNotice, hideNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults } from './hud.js';
+import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults } from './hud.js';
 import { renderMenu, renderMute } from './menu.js';
 import { keys, HOLD, readInput, pollPads, connectedPads, bindKeyboard, bindTouch } from './input.js';
 

@@ -188,7 +188,8 @@ kbd {
 body.duel .hud-tl { left: 20px; top: 16px; }
 body.duel .hud-time { font-size: 34px; }
 body.duel .hud-split { font-size: 16px; }
-body.duel .hud-progress { left: 250px; right: 28px; width: auto; transform: none; top: 30px; }
+body.duel .hud-progress { left: 300px; right: 28px; width: auto; transform: none; top: 30px; }
+body.duel .hud-stage { font-size: 11px; max-width: 270px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 body.duel .hud-br { right: 20px; bottom: 16px; padding: 4px 14px 8px 16px; border-right-color: var(--pc, var(--accent)); }
 body.duel .speed span { font-size: 50px; }
 body.duel .speed small { font-size: 13px; }

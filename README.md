@@ -1,8 +1,8 @@
 # Dustline
 
 A pocket rally: a low-poly, flat-shaded time-trial game that runs in the browser.
-Three handmade-by-algorithm stages (autumn forest, high desert, alpine snow), one car,
-one clock. Beat your best time and split times on each stage; records are kept in
+Twelve stages in four regions (forest, desert, snow, coast), some of them at night or in
+the rain, plus a new Daily Stage generated from the date. One car, one clock. Beat your best time and split times on each stage; records are kept in
 your browser's local storage.
 
 Built with plain ES modules and three.js (vendored in `vendor/`). There is no build step and
@@ -19,7 +19,8 @@ nothing is loaded from the network.
 | Camera (chase / high / top) | `C` | | |
 | Mute | `M` | | |
 | Pause | `Esc` | Start | ‖ button |
-| Menu: choose stage / start | `←` `→` / `Enter` | d-pad / A | tap |
+| Menu: choose stage / start | `←` `→` / `Enter` | d-pad ◀ ▶ / A | tap |
+| Menu: previous / next region | `↑` `↓` or `Q` `E` | d-pad ▲ ▼ | tabs |
 | Menu: Solo / Duel | `1` / `2` | | tap |
 
 ### Duel (2 players, split screen)
@@ -49,9 +50,29 @@ npx http-server -p 8080 -c-1     # or: python3 -m http.server 8080
 
 Then open <http://localhost:8080/>.
 
-Handy URL parameters: `?stage=1` preselects a stage (0-based index, or an id such as
-`?stage=mesa`), `?mode=duel` preselects split-screen duel, `?start=1` skips the menu, and `?auto=1` lets
-the autopilot drive the race (both cars in a duel).
+Handy URL parameters: `?stage=mesa` preselects a stage (an id, `daily`, or a 0-based index into
+the stage list), `?mode=duel` preselects split-screen duel, `?start=1` skips the menu, and `?auto=1` lets
+the autopilot drive the race (both cars in a duel). `?cond=night,rain` forces conditions on any
+stage, for testing.
+
+## Code map
+
+`src/main.js` runs the game: renderer, stage loading, game states, the loop and rendering.
+The other modules each handle one part:
+
+| Module | Contents |
+| --- | --- |
+| `track.js` | stage definitions, regions, the daily stage and terrain/road/scenery generation |
+| `car.js` | car model, physics and autopilot |
+| `audio.js` | procedural engine, gravel and beep sounds |
+| `catalog.js` | menu order, region and daily lookups, stage lengths and conditions (falls back to defaults if track.js lacks them) |
+| `fx.js` | dust and spray puffs, rain streaks, night headlights |
+| `player.js` | one racer: car, chase/orbit camera, viewport and timing |
+| `hud.js` | per-player HUD panes and the solo/duel results panels |
+| `menu.js` | main menu: mode toggle, region tabs, stage and daily cards, paints |
+| `input.js` | keyboard, gamepad and touch input |
+| `storage.js` | localStorage wrapper and best-time records |
+| `util.js` | formatting and small maths helpers |
 
 ## Publish on GitHub Pages
 
