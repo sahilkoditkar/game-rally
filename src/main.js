@@ -214,7 +214,11 @@ class Player {
     const c = this.car;
     idx = clamp(Math.round(idx), 0, stage.n - 1);
     c.reset(stage, idx);
-    if (lat) { c.x += stage.tz[idx] * lat; c.z -= stage.tx[idx] * lat; c.y = stage.height(c.x, c.z); c.updateVisual(0); }
+    if (lat) {
+      c.x += stage.tz[idx] * lat; c.z -= stage.tx[idx] * lat; c.y = stage.height(c.x, c.z);
+      if (c._prev) Object.assign(c._prev, { x: c.x, y: c.y, z: c.z, yaw: c.yaw }); // no interpolated slide from the centreline
+      c.updateVisual(0);
+    }
     c.impact = 0; this.camSnap = true; this.stuckT = 0; this.carry[0] = this.carry[1] = 0;
   }
 }
