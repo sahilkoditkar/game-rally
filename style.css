@@ -394,7 +394,7 @@ body.touch .legend-touch { display: flex; }
 .noscript { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--cream); }
 
 /* ---------- touch controls ---------- */
-.touch {
+#touch {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 7; pointer-events: none;
   display: flex; justify-content: space-between; align-items: flex-end;
   padding: 0 calc(var(--gut) + var(--safe-r)) calc(18px + var(--safe-b)) calc(var(--gut) + var(--safe-l));
@@ -595,3 +595,17 @@ body.touch .rpm { width: 90px; }
 #rallyBody .duel-splits td:not(:first-child) { color: var(--char); font-size: 18px; font-weight: 900; font-style: italic; }
 #rallyBody .duel-splits td.win { color: var(--good); }
 #rallyBody .duel-splits tr.hd td { font-size: 12px; font-style: normal; color: var(--muted); }
+
+/* ---------- ghost ---------- */
+.hud-ghost {
+  display: none; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 3px; transform: skewX(-8deg);
+  background: var(--char-soft); font-style: italic; font-weight: 900; font-size: 17px; font-variant-numeric: tabular-nums;
+}
+.hud-ghost.show { display: inline-flex; }
+.hud-ghost b { font-size: 11px; letter-spacing: .14em; color: #b9c7e6; }
+.hud-ghost .d-good { color: #63e08e; } .hud-ghost .d-bad { color: #ff7a63; } .hud-ghost .d-none { color: var(--cream-2); }
+.ghost-saved { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 3px; background: #3a4766; color: #e3ebff; font-size: 12px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.menu-actions .toggle { padding: 0 12px; font-size: 14px; }
+.menu-actions .toggle[aria-pressed="false"] { opacity: .6; }
+.menu-actions .btn.ghost { white-space: nowrap; padding: 0 12px; font-size: 14px; }
+.menu-actions .big { flex: 1 1 auto; min-width: 0; padding: 0 16px; }

@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { ROAD_HALF, STEP, clamp, smoothstep, part, merge } from './track.js';
 
 // ---------------------------------------------------------------------------
-// Dustline car: an original chunky low-poly rally hatchback + arcade physics.
+// Dustline cars: four original chunky low-poly rally cars sharing one arcade
+// physics model, each driven by its own parameter block.
 // Conventions: Y up, yaw 0 faces +Z, forward f = (sin yaw, cos yaw),
 // left l = (cos yaw, -sin yaw), positive yaw rate / steer = turn LEFT.
 // ---------------------------------------------------------------------------
@@ -16,21 +17,111 @@ export const PAINTS = [
   { name: 'Plum', hex: '#7c4bb0' },
 ];
 
-// tuning
-const POWER = 13, VMAX = 52, BRAKE = 17, REV_ACC = 6, REV_MAX = 9, HAND_DEC = 4;
-const GRIP = 10.5, GRAV = 20, WB = 2.5;
+// shared constants
+const REV_ACC = 6, REV_MAX = 9, GRIP = 10.5, GRAV = 20;
 const FIXED_DT = 1 / 120;
 const MAX_ROLL = 0.105, MAX_PITCH = 0.07; // cosmetic body lean limits (~6 deg, ~4 deg)
-const WHEEL_R = 0.36, WX = 0.82, WZ = 1.25;
-const GEAR_TOP = [0, 11, 19, 27, 36, 46];
-const BODY_PIVOT = 0.45;
+
+// ---------------------------------------------------------------------------
+// Handling blocks. Every number is consumed by the same physics code in Car.step.
+// ---------------------------------------------------------------------------
+const BASE = {
+  power: 13,        // m/s^2 drive at standstill, falls linearly to 0 at vmax
+  vmax: 52,         // m/s, drive cut-off (real top speed is lower because of drag)
+  brake: 17,        // m/s^2
+  handDec: 4,       // handbrake decel m/s^2
+  grip: 1,          // multiplies GRIP * stage grip
+  latStiff: 14,     // how hard the tyres pull the velocity back to the heading (1/s)
+  wb: 2.5,          // physics wheelbase (kinematic yaw)
+  lock0: 0.55, lockDrop: 0.40,         // max steer angle = lock0 - lockDrop * min(1, v/42)
+  steerIn: 5.5, steerInDrop: 2.5, steerOut: 9, // normalised steering ramp rates (1/s)
+  yawMargin: 1.06,  // yaw authority beyond the grip limit with no slide (1 = pure carve)
+  driftYaw: 1.5,    // extra yaw authority per unit of drift state
+  handYaw: 1.8, handLat: 0.55, // handbrake yaw bonus / lateral grip factor
+  liftOff: 0.7, liftRate: 2.2, // lift-off oversteer target and build rate
+  trail: 0.4,       // trail-brake rotation target
+  powerOS: 0,       // power-oversteer added on top of the loose-surface term
+  holdMax: 0.6,     // drift state that throttle + steer can sustain
+  driftLatLoss: 0.2,// lateral grip lost per unit drift
+  alignBase: 1.45, alignHold: 0.8, assist: 1.2, // self-aligning / counter-steer assist
+  betaLim: 0.75,    // slide angle where the anti-spin pull-back starts (rad)
+  betaLimDrift: 0,  // extra slide angle allowed per unit drift state (eases handbrake exits)
+  yawResp: 10,      // yaw-rate response (1/s)
+  mass: 1,          // collision response: lighter bounces/spins more, heavier ploughs on
+  gears: [0, 11, 19, 27, 36, 46],
+};
+const H = (o) => Object.freeze({ ...BASE, ...o });
+
+// stats are derived from measured behaviour (flat test surface, grip 1):
+//   speed = (top km/h - 120) / 90, accel = (4.2 - 0-100 s) / 2.2,
+//   grip = (full-lock lateral g - 0.8) / 0.5, nudged by power-on rear slip / forgiveness,
+//   drift = held-drift angle / 60 deg blended with lift-off angle; rounded to 0.05
+export const CARS = [
+  {
+    id: 'rook', name: 'Rook R7',
+    blurb: 'The all-rounder. Planted, honest and happy to slide when you ask it to.',
+    stats: { speed: 0.5, accel: 0.4, grip: 0.45, drift: 0.3 }, unlock: 0,
+    handling: H({}),
+    dims: { wheelR: 0.36, wheelW: 0.26, wx: 0.82, wz: 1.25, wzR: 1.25, pivot: 0.45 },
+    build: buildRook,
+  },
+  {
+    id: 'pip', name: 'Pip 66',
+    blurb: 'A tiny boxy city runabout. Darts into hairpins, sticks like glue, shrugs off mistakes.',
+    stats: { speed: 0.2, accel: 0.2, grip: 0.55, drift: 0.1 }, unlock: 6,
+    handling: H({
+      power: 13.5, vmax: 42, brake: 18, grip: 1.05, latStiff: 16, wb: 2.05,
+      lock0: 0.6, lockDrop: 0.42, steerIn: 7, steerInDrop: 3, steerOut: 11,
+      yawMargin: 1.03, driftYaw: 1.0, handYaw: 1.9, handLat: 0.62,
+      liftOff: 0.3, liftRate: 1.4, trail: 0.2, powerOS: -0.2, holdMax: 0.35,
+      driftLatLoss: 0.12, alignBase: 1.9, alignHold: 0.5, assist: 1.7, betaLim: 0.55, betaLimDrift: 0.7, yawResp: 13,
+      mass: 0.75, gears: [0, 10, 17, 24, 31, 39],
+    }),
+    dims: { wheelR: 0.3, wheelW: 0.22, wx: 0.68, wz: 1.0, wzR: 1.0, pivot: 0.42 },
+    build: buildPip,
+  },
+  {
+    id: 'halvard', name: 'Halvard Longtail',
+    blurb: 'Long, low and rear-driven. Fast on the straights, loose in the tail. Bring counter-steer.',
+    stats: { speed: 0.8, accel: 0.5, grip: 0.4, drift: 0.9 }, unlock: 14,
+    handling: H({
+      power: 13, vmax: 62, brake: 16, grip: 0.98, latStiff: 11, wb: 2.9,
+      lock0: 0.5, lockDrop: 0.38, steerIn: 4.2, steerInDrop: 2, steerOut: 7.5,
+      yawMargin: 1.1, driftYaw: 1.9, handYaw: 1.8, handLat: 0.5,
+      liftOff: 0.85, liftRate: 2.8, trail: 0.5, powerOS: 0.45, holdMax: 0.8,
+      driftLatLoss: 0.25, alignBase: 1.05, alignHold: 0.4, assist: 0.55, betaLim: 0.9, yawResp: 7,
+      mass: 1.1, gears: [0, 13, 22, 31, 41, 52],
+    }),
+    dims: { wheelR: 0.37, wheelW: 0.28, wx: 0.84, wz: 1.5, wzR: 1.4, pivot: 0.42 },
+    build: buildHalvard,
+  },
+  {
+    id: 'grendel', name: 'Grendel S',
+    blurb: 'A wide-arched, winged monster. Savage pace and huge grip, but it bites hard past the limit.',
+    stats: { speed: 0.95, accel: 0.9, grip: 0.85, drift: 0.65 }, unlock: 24,
+    handling: H({
+      power: 17.5, vmax: 64, brake: 19, grip: 1.14, latStiff: 15, wb: 2.6,
+      lock0: 0.55, lockDrop: 0.36, steerIn: 7.5, steerInDrop: 2.5, steerOut: 10,
+      yawMargin: 1.12, driftYaw: 1.7, handYaw: 1.8, handLat: 0.5,
+      liftOff: 0.8, liftRate: 3.0, trail: 0.5, powerOS: 0.2, holdMax: 0.7,
+      driftLatLoss: 0.35, alignBase: 1.25, alignHold: 0.8, assist: 0.8, betaLim: 0.85, yawResp: 14,
+      mass: 1.3, gears: [0, 14, 24, 34, 44, 55],
+    }),
+    dims: { wheelR: 0.4, wheelW: 0.3, wx: 0.9, wz: 1.3, wzR: 1.3, pivot: 0.48 },
+    build: buildGrendel,
+  },
+];
+const carDef = (id) => CARS.find((c) => c.id === id) || CARS[0];
 
 const C = {
   dark: '#2b2c33', trim: '#3a3c45', glass: '#26313d', glassHi: '#3a4a5a', light: '#fff4d6', lamp: '#fff8e6',
   tail: '#d8252b', amber: '#f39a2b', stripe: '#f3efe4', tyre: '#1f2024', hub: '#d8d4c8', flap: '#c62c2c',
-  skid: '#8a8d94', number: '#22232a',
+  skid: '#8a8d94', number: '#22232a', well: '#17181c',
 };
 
+// ---------------------------------------------------------------------------
+// geometry helpers
+// ---------------------------------------------------------------------------
 // remap a unit box's top vertices to make a tapered frustum (cabin)
 function frustum(wb, lb, wt, lt, h, topOffZ = 0) {
   const g = new THREE.BoxGeometry(1, 1, 1);
@@ -43,168 +134,282 @@ function frustum(wb, lb, wt, lt, h, topOffZ = 0) {
   g.computeVertexNormals();
   return g;
 }
-
 function box(w, h, l) { return new THREE.BoxGeometry(w, h, l); }
 function cylX(r, w, seg = 12) { const g = new THREE.CylinderGeometry(r, r, w, seg); g.rotateZ(Math.PI / 2); return g; }
 function cylZ(r, l, seg = 12) { const g = new THREE.CylinderGeometry(r, r, l, seg); g.rotateX(Math.PI / 2); return g; }
-
-function buildShell() {
-  // side profile (z, y) of the lower body, extruded across the car's width
+// side profile (z, y) extruded across width W (centred on x = 0)
+function profileBody(prof, W, BV = 0.07) {
   const s = new THREE.Shape();
-  const prof = [
-    [-1.9, 0.42], [1.86, 0.42], [1.96, 0.56], [1.93, 0.78], [1.05, 0.93],
-    [-1.62, 0.98], [-1.9, 0.9], [-1.95, 0.6],
-  ];
   s.moveTo(prof[0][0], prof[0][1]);
   for (let i = 1; i < prof.length; i++) s.lineTo(prof[i][0], prof[i][1]);
   s.closePath();
-  const W = 1.6, BV = 0.07;
-  const body = new THREE.ExtrudeGeometry(s, { depth: W, bevelEnabled: true, bevelThickness: BV, bevelSize: BV, bevelSegments: 1, curveSegments: 1 });
-  body.translate(0, 0, -W / 2);
-  body.rotateY(-Math.PI / 2); // shape x -> world z, extrusion -> world x
-  const paint = [];
-  paint.push(part(body, '#fff'));
-
-  // flared wheel arches: thick half-annulus fender lips over each wheel
+  const g = new THREE.ExtrudeGeometry(s, { depth: W, bevelEnabled: BV > 0, bevelThickness: BV, bevelSize: BV, bevelSegments: 1, curveSegments: 1 });
+  g.translate(0, 0, -W / 2);
+  g.rotateY(-Math.PI / 2); // shape x -> world z, extrusion -> world x
+  return g;
+}
+// thick half-annulus fender lips over each wheel (paint) + dark wells on the flank (detail)
+function roundArches(paint, d, dm, rOut, rIn, depth, xIn, wellX) {
   const arch = new THREE.Shape();
-  arch.absarc(0, 0, 0.54, 0, Math.PI, false);
-  arch.absarc(0, 0, 0.43, Math.PI, 0, true);
-  const archG = new THREE.ExtrudeGeometry(arch, { depth: 0.16, bevelEnabled: false, curveSegments: 5 });
-  archG.rotateY(-Math.PI / 2); // depth now spans x in [-0.16, 0]
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const g = archG.clone(); g.translate(sx > 0 ? 0.16 : 0, 0, 0);
-    paint.push(part(g, '#fff', sx * 0.82, WHEEL_R + 0.02, sz * WZ));
+  arch.absarc(0, 0, rOut, 0, Math.PI, false);
+  arch.absarc(0, 0, rIn, Math.PI, 0, true);
+  const archG = new THREE.ExtrudeGeometry(arch, { depth, bevelEnabled: false, curveSegments: 5 });
+  archG.rotateY(-Math.PI / 2); // depth spans x in [-depth, 0]
+  for (const sx of [-1, 1]) for (const [sz, wz] of [[1, dm.wz], [-1, dm.wzR]]) {
+    const g = archG.clone(); g.translate(sx > 0 ? depth : 0, 0, 0);
+    paint.push(part(g, '#fff', sx * xIn, dm.wheelR + 0.02, sz * wz));
+    const well = new THREE.CylinderGeometry(rIn + 0.01, rIn + 0.01, 0.02, 10, 1, false, 0, Math.PI);
+    well.rotateZ(Math.PI / 2);
+    d.push(part(well, C.well, sx * wellX, dm.wheelR + 0.02, sz * wz));
   }
+}
+function mudFlaps(d, dm, w = 0.3, h = 0.3) {
+  for (const sx of [-1, 1]) for (const [sz, wz] of [[1, dm.wz], [-1, dm.wzR]]) {
+    d.push(part(box(w, h, 0.03), C.flap, sx * dm.wx, h * 0.5 + 0.12, sz * wz - dm.wheelR - 0.14));
+  }
+}
+function roundel(d, x, y, z, sx, r = 0.27) {
+  d.push(part(cylX(r, 0.02, 16), C.stripe, x, y, z));
+  const k = r / 0.27;
+  d.push(part(box(0.02, 0.06 * k, 0.24 * k), C.number, x + sx * 0.012, y + 0.1 * k, z));
+  const diag = box(0.02, 0.3 * k, 0.07 * k); diag.rotateX(-sx * 0.45);
+  d.push(part(diag, C.number, x + sx * 0.012, y - 0.04 * k, z - sx * 0.05 * k));
+}
 
-  // roof panel on the cabin
-  const roof = frustum(1.36, 1.72, 1.24, 1.5, 0.07, -0.05);
-  paint.push(part(roof, '#fff', 0, 1.5, -0.72));
-  // rear wing plate (paint) + roof-edge spoiler lip
-  paint.push(part(box(1.66, 0.06, 0.42), '#fff', 0, 1.7, -1.72));
-  // door mirrors
+// ---- 1. Rook R7: the original chunky rally hatchback --------------------------
+function buildRook(dm) {
+  const paint = [], d = [];
+  paint.push(part(profileBody([
+    [-1.9, 0.42], [1.86, 0.42], [1.96, 0.56], [1.93, 0.78], [1.05, 0.93],
+    [-1.62, 0.98], [-1.9, 0.9], [-1.95, 0.6],
+  ], 1.6), '#fff'));
+  roundArches(paint, d, dm, 0.54, 0.43, 0.16, 0.82, 0.885);
+  paint.push(part(frustum(1.36, 1.72, 1.24, 1.5, 0.07, -0.05), '#fff', 0, 1.5, -0.72)); // roof panel
+  paint.push(part(box(1.66, 0.06, 0.42), '#fff', 0, 1.7, -1.72));                      // wing plate
   for (const sx of [-1, 1]) paint.push(part(box(0.12, 0.1, 0.16), '#fff', sx * 0.9, 1.06, 0.74));
 
-  // ---- detail mesh (vertex colours) ----
-  const d = [];
-  // cabin glass: tapered, set back, windscreen raked
   d.push(part(frustum(1.6, 2.7, 1.3, 1.72, 0.55, -0.22), C.glass, 0, 0.95, -0.4));
-  // body-colour pillars hint: thin light strip at the bottom edge of the glass
   d.push(part(box(1.62, 0.04, 2.64), C.trim, 0, 0.97, -0.4));
-  // bumpers
   d.push(part(box(1.86, 0.26, 0.3), C.dark, 0, 0.47, 1.95));
   d.push(part(box(1.86, 0.28, 0.28), C.dark, 0, 0.5, -1.98));
-  // front skid plate
   d.push(part(box(1.3, 0.06, 0.6), C.skid, 0, 0.36, 1.7));
-  // grille
   d.push(part(box(0.7, 0.16, 0.06), C.dark, 0, 0.7, 2.0));
-  // headlights
   for (const sx of [-1, 1]) {
     d.push(part(box(0.38, 0.17, 0.06), C.light, sx * 0.58, 0.7, 2.0));
     d.push(part(box(0.18, 0.08, 0.05), C.amber, sx * 0.62, 0.57, 2.1));
+    d.push(part(box(0.34, 0.18, 0.06), C.tail, sx * 0.6, 0.82, -2.02));
   }
-  // taillights
-  for (const sx of [-1, 1]) d.push(part(box(0.34, 0.18, 0.06), C.tail, sx * 0.6, 0.82, -2.02));
-  // rear hatch glass
   d.push(part(box(1.2, 0.04, 0.3), C.glass, 0, 0.99, -1.72));
-  // exhaust
   d.push(part(cylZ(0.06, 0.25, 8), C.skid, 0.55, 0.4, -2.05));
-  // dark wheel wells on the body flanks (fake cut-outs behind the tyres)
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const well = new THREE.CylinderGeometry(0.44, 0.44, 0.02, 10, 1, false, 0, Math.PI);
-    well.rotateZ(Math.PI / 2);
-    d.push(part(well, '#17181c', sx * 0.885, WHEEL_R + 0.02, sz * WZ));
-  }
-  // sills (dark side skirts)
   for (const sx of [-1, 1]) d.push(part(box(0.06, 0.16, 1.4), C.dark, sx * 0.9, 0.5, 0));
-
   // hood light pod with 4 round lamps
   const hoodY = (z) => 0.78 + (1.93 - z) / (1.93 - 1.05) * (0.93 - 0.78) + 0.07;
   const podZ = 1.62;
-  const pod = box(1.16, 0.2, 0.2);
-  d.push(part(pod, C.dark, 0, hoodY(podZ) + 0.1, podZ));
-  for (let k = 0; k < 4; k++) {
-    const lx = -0.42 + k * 0.28;
-    d.push(part(cylZ(0.1, 0.06, 10), C.lamp, lx, hoodY(podZ) + 0.11, podZ + 0.12));
-  }
-
-  // twin racing stripes: hood (follows rake), roof, rear deck
+  d.push(part(box(1.16, 0.2, 0.2), C.dark, 0, hoodY(podZ) + 0.1, podZ));
+  for (let k = 0; k < 4; k++) d.push(part(cylZ(0.1, 0.06, 10), C.lamp, -0.42 + k * 0.28, hoodY(podZ) + 0.11, podZ + 0.12));
+  // twin racing stripes
   const hoodAng = Math.atan2(0.15, 1.93 - 1.05);
   for (const sx of [-1, 1]) {
     const hs = box(0.16, 0.02, 0.62); hs.rotateX(hoodAng);
     d.push(part(hs, C.stripe, sx * 0.16, hoodY(1.22) + 0.005, 1.22));
     d.push(part(box(0.16, 0.02, 1.52), C.stripe, sx * 0.16, 1.585, -0.77));
-    const ws = box(0.16, 0.02, 0.42); d.push(part(ws, C.stripe, sx * 0.16, 1.735, -1.72));
+    d.push(part(box(0.16, 0.02, 0.42), C.stripe, sx * 0.16, 1.735, -1.72));
   }
-
-  // door number roundels
-  for (const sx of [-1, 1]) {
-    const x = sx * 0.94;
-    d.push(part(cylX(0.27, 0.02, 16), C.stripe, x, 0.7, -0.1));
-    // a bold "7" from two bars
-    const top = box(0.02, 0.06, 0.24); d.push(part(top, C.number, x + sx * 0.012, 0.8, -0.1));
-    const diag = box(0.02, 0.3, 0.07); diag.rotateX(-sx * 0.45); d.push(part(diag, C.number, x + sx * 0.012, 0.66, -0.1 - sx * 0.05));
-  }
-
-  // rear wing struts + end plates
+  for (const sx of [-1, 1]) roundel(d, sx * 0.94, 0.7, -0.1, sx);
   for (const sx of [-1, 1]) {
     d.push(part(box(0.06, 0.2, 0.12), C.dark, sx * 0.5, 1.6, -1.66));
     d.push(part(box(0.04, 0.2, 0.46), C.dark, sx * 0.84, 1.7, -1.72));
   }
-
-  // mud flaps behind each wheel
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    d.push(part(box(0.3, 0.3, 0.03), C.flap, sx * WX, 0.27, sz * WZ - 0.5));
-  }
-  return { paint: merge(paint), detail: merge(d) };
+  mudFlaps(d, dm);
+  return { paint, d };
 }
 
-function buildWheel(side) {
+// ---- 2. Pip 66: tall short city box with a white roof and roof basket ---------
+function buildPip(dm) {
+  const paint = [], d = [];
+  paint.push(part(profileBody([
+    [-1.52, 0.34], [1.5, 0.34], [1.6, 0.46], [1.58, 0.76], [1.2, 0.9],
+    [-1.5, 0.94], [-1.6, 0.86], [-1.6, 0.46],
+  ], 1.38, 0.06), '#fff'));
+  roundArches(paint, d, dm, 0.44, 0.35, 0.12, 0.7, 0.755);
+  for (const sx of [-1, 1]) paint.push(part(box(0.1, 0.09, 0.14), '#fff', sx * 0.76, 0.98, 0.9));
+  // tall upright glasshouse, two-tone off-white roof
+  d.push(part(frustum(1.42, 2.6, 1.32, 2.3, 0.68, -0.08), C.glass, 0, 0.92, -0.22));
+  d.push(part(box(1.44, 0.04, 2.58), C.trim, 0, 0.94, -0.22));
+  d.push(part(frustum(1.38, 2.36, 1.3, 2.2, 0.07), C.stripe, 0, 1.6, -0.3));
+  // roof basket
+  for (const sx of [-1, 1]) d.push(part(box(0.05, 0.05, 1.7), C.dark, sx * 0.55, 1.75, -0.3));
+  for (const z of [0.45, -0.3, -1.05]) d.push(part(box(1.14, 0.05, 0.05), C.dark, 0, 1.75, z));
+  for (const sx of [-1, 1]) for (const z of [0.45, -1.05]) d.push(part(box(0.05, 0.1, 0.05), C.dark, sx * 0.55, 1.7, z));
+  d.push(part(box(0.9, 0.18, 0.5), '#5a4a3a', 0, 1.86, -0.5)); // a strapped spare-parts crate
+  // little roof spoiler
+  d.push(part(box(1.3, 0.05, 0.18), C.dark, 0, 1.66, -1.48));
+  // round headlights + grille + bumpers
+  d.push(part(box(1.6, 0.22, 0.22), C.dark, 0, 0.42, 1.6));
+  d.push(part(box(1.6, 0.24, 0.2), C.dark, 0, 0.44, -1.62));
+  d.push(part(box(0.5, 0.14, 0.05), C.dark, 0, 0.66, 1.62));
+  for (const sx of [-1, 1]) {
+    d.push(part(cylZ(0.14, 0.06, 12), C.light, sx * 0.5, 0.68, 1.6));
+    d.push(part(box(0.14, 0.34, 0.06), C.tail, sx * 0.6, 0.72, -1.63));
+  }
+  // single fat stripe down the centre of the bonnet
+  const hs = box(0.3, 0.02, 0.42); hs.rotateX(Math.atan2(0.14, 0.38));
+  d.push(part(hs, C.stripe, 0, 0.92, 1.36));
+  for (const sx of [-1, 1]) d.push(part(box(0.05, 0.12, 1.2), C.dark, sx * 0.77, 0.45, 0));
+  for (const sx of [-1, 1]) roundel(d, sx * 0.775, 0.66, 0.05, sx, 0.22);
+  mudFlaps(d, dm, 0.26, 0.24);
+  return { paint, d };
+}
+
+// ---- 3. Halvard Longtail: long-bonnet fastback coupe with a ducktail -----------
+function buildHalvard(dm) {
+  const paint = [], d = [];
+  paint.push(part(profileBody([
+    [-2.22, 0.4], [2.2, 0.4], [2.34, 0.5], [2.3, 0.64], [0.55, 0.84],
+    [-1.95, 0.9], [-2.3, 0.86], [-2.32, 0.55],
+  ], 1.64), '#fff'));
+  roundArches(paint, d, dm, 0.52, 0.44, 0.15, 0.84, 0.895);
+  // ducktail spoiler (paint wedge)
+  const duck = frustum(1.7, 0.42, 1.74, 0.2, 0.14, -0.1);
+  paint.push(part(duck, '#fff', 0, 0.94, -2.12));
+  // low fastback glass with paint roof
+  d.push(part(frustum(1.5, 2.4, 1.14, 1.0, 0.4, -0.5), C.glass, 0, 0.86, -0.55));
+  d.push(part(box(1.52, 0.04, 2.38), C.trim, 0, 0.88, -0.55));
+  paint.push(part(frustum(1.16, 1.0, 1.06, 0.84, 0.05, -0.02), '#fff', 0, 1.26, -1.05));
+  for (const sx of [-1, 1]) paint.push(part(box(0.12, 0.09, 0.16), '#fff', sx * 0.86, 0.95, 0.5));
+  // long single centre stripe: bonnet, roof, tail
+  const bonAng = Math.atan2(0.2, 2.3 - 0.55);
+  const bs = box(0.42, 0.02, 1.72); bs.rotateX(bonAng);
+  d.push(part(bs, C.stripe, 0, 0.81, 1.42));
+  d.push(part(box(0.42, 0.02, 0.86), C.stripe, 0, 1.325, -1.07));
+  d.push(part(box(0.42, 0.02, 0.24), C.stripe, 0, 1.085, -2.12));
+  // nose: slim lamps, splitter; tail: full-width light bar, diffuser
+  d.push(part(box(1.86, 0.08, 0.36), C.dark, 0, 0.38, 2.2));
+  for (const sx of [-1, 1]) {
+    d.push(part(box(0.46, 0.09, 0.06), C.light, sx * 0.55, 0.62, 2.3));
+    d.push(part(cylZ(0.07, 0.3, 8), C.skid, sx * 0.3, 0.42, -2.3));
+  }
+  d.push(part(box(0.5, 0.1, 0.05), C.dark, 0, 0.55, 2.34));
+  d.push(part(box(1.5, 0.1, 0.06), C.tail, 0, 0.8, -2.33));
+  d.push(part(box(1.7, 0.18, 0.2), C.dark, 0, 0.46, -2.24));
+  // bonnet vents
+  for (const sx of [-1, 1]) d.push(part(box(0.24, 0.03, 0.5), C.dark, sx * 0.48, 0.8, 1.1));
+  for (const sx of [-1, 1]) d.push(part(box(0.05, 0.12, 1.9), C.dark, sx * 0.88, 0.47, 0));
+  for (const sx of [-1, 1]) roundel(d, sx * 0.885, 0.64, -0.1, sx, 0.24);
+  mudFlaps(d, dm, 0.3, 0.26);
+  return { paint, d };
+}
+
+// ---- 4. Grendel S: wide box-arched special with roof scoop and big wing --------
+function buildGrendel(dm) {
+  const paint = [], d = [];
+  paint.push(part(profileBody([
+    [-1.95, 0.46], [1.92, 0.46], [2.06, 0.58], [2.02, 0.78], [1.1, 0.94],
+    [-1.7, 1.0], [-2.0, 0.92], [-2.02, 0.62],
+  ], 1.62), '#fff'));
+  // boxy bolt-on arches, chamfered at front and back
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const fl = frustum(0.3, 1.36, 0.3, 1.0, 0.36);
+    paint.push(part(fl, '#fff', sx * 0.95, 0.66, sz * dm.wz));
+    const well = new THREE.CylinderGeometry(0.47, 0.47, 0.02, 10, 1, false, 0, Math.PI);
+    well.rotateZ(Math.PI / 2);
+    d.push(part(well, C.well, sx * 0.895, dm.wheelR + 0.02, sz * dm.wz));
+    d.push(part(box(0.3, 0.06, 1.38), C.dark, sx * 0.95, 0.66, sz * dm.wz)); // arch lip
+  }
+  // squat cabin
+  d.push(part(frustum(1.56, 2.5, 1.22, 1.5, 0.5, -0.25), C.glass, 0, 0.98, -0.42));
+  d.push(part(box(1.58, 0.04, 2.48), C.trim, 0, 1.0, -0.42));
+  paint.push(part(frustum(1.26, 1.54, 1.16, 1.36, 0.06, -0.02), '#fff', 0, 1.48, -0.67));
+  // roof scoop
+  d.push(part(frustum(0.5, 0.7, 0.42, 0.5, 0.2, -0.06), C.dark, 0, 1.53, -0.25));
+  d.push(part(box(0.36, 0.13, 0.04), '#101114', 0, 1.62, 0.1));
+  // huge rear wing on tall struts, with big endplates
+  paint.push(part(box(2.0, 0.07, 0.6), '#fff', 0, 1.88, -1.82));
+  for (const sx of [-1, 1]) {
+    d.push(part(box(0.07, 0.42, 0.16), C.dark, sx * 0.55, 1.64, -1.78));
+    d.push(part(box(0.05, 0.36, 0.74), C.dark, sx * 1.0, 1.86, -1.84));
+  }
+  d.push(part(box(2.0, 0.03, 0.12), C.stripe, 0, 1.93, -1.6)); // wing leading-edge band
+  // aggressive front: deep splitter, bumper lamps, bonnet vents
+  d.push(part(box(2.06, 0.1, 0.5), C.dark, 0, 0.42, 1.98));
+  d.push(part(box(1.9, 0.26, 0.24), C.dark, 0, 0.62, 2.0));
+  for (let k = 0; k < 4; k++) d.push(part(cylZ(0.12, 0.06, 10), C.lamp, -0.6 + k * 0.4, 0.64, 2.13));
+  for (const sx of [-1, 1]) {
+    d.push(part(box(0.32, 0.12, 0.05), C.light, sx * 0.6, 0.86, 2.02));
+    d.push(part(box(0.4, 0.16, 0.06), C.tail, sx * 0.6, 0.84, -2.04));
+    d.push(part(box(0.28, 0.03, 0.42), C.dark, sx * 0.36, 0.95, 1.45));
+    d.push(part(box(0.06, 0.26, 0.5), C.dark, sx * 0.87, 0.74, -0.75)); // side intakes
+  }
+  d.push(part(box(1.9, 0.3, 0.26), C.dark, 0, 0.56, -2.02));
+  for (const sx of [-1, 1]) d.push(part(cylZ(0.08, 0.3, 8), C.skid, sx * 0.45, 0.46, -2.15));
+  // diagonal livery band over the bonnet
+  const band = box(0.36, 0.02, 1.5); band.rotateY(0.5); band.rotateX(Math.atan2(0.16, 0.92));
+  d.push(part(band, C.stripe, 0.05, 0.92, 1.45));
+  for (const sx of [-1, 1]) roundel(d, sx * 0.885, 0.72, 0.15, sx, 0.25);
+  mudFlaps(d, dm, 0.36, 0.32);
+  return { paint, d };
+}
+
+function buildWheel(dm, side) {
+  const r = dm.wheelR, w = dm.wheelW, o = w / 2;
   const parts = [];
-  parts.push(part(cylX(WHEEL_R, 0.26, 14), C.tyre));
-  parts.push(part(cylX(WHEEL_R * 0.92, 0.28, 14), C.tyre)); // sidewall shoulder
-  parts.push(part(cylX(0.21, 0.04, 10), C.hub, 0.13, 0, 0));
-  parts.push(part(box(0.03, 0.36, 0.06), C.dark, 0.155, 0, 0));
-  parts.push(part(box(0.03, 0.06, 0.36), C.dark, 0.155, 0, 0));
-  parts.push(part(cylX(0.06, 0.05, 8), C.hub, 0.16, 0, 0));
+  parts.push(part(cylX(r, w, 14), C.tyre));
+  parts.push(part(cylX(r * 0.92, w + 0.02, 14), C.tyre)); // sidewall shoulder
+  parts.push(part(cylX(r * 0.58, 0.04, 10), C.hub, o, 0, 0));
+  parts.push(part(box(0.03, r, 0.06), C.dark, o + 0.025, 0, 0));
+  parts.push(part(box(0.03, 0.06, r), C.dark, o + 0.025, 0, 0));
+  parts.push(part(cylX(r * 0.17, 0.05, 8), C.hub, o + 0.03, 0, 0));
   const g = merge(parts);
   if (side < 0) g.rotateY(Math.PI); // hub faces outward on the right-hand wheels
   return g;
 }
 
+// ---------------------------------------------------------------------------
 export class Car {
-  constructor() {
+  constructor(carId = CARS[0].id) {
+    const def = carDef(carId);
+    this.carId = def.id;
+    this.def = def;
+    this.H = def.handling;
+    const dm = this.dims = def.dims;
+
     this.group = new THREE.Group();
     this.group.rotation.order = 'YXZ';
     this.body = new THREE.Group();
-    this.body.position.y = BODY_PIVOT;
+    this.body.position.y = dm.pivot;
     this.group.add(this.body);
 
-    const shell = buildShell();
-    this.paintMat = new THREE.MeshLambertMaterial({ color: PAINTS[0].hex, flatShading: true, side: THREE.DoubleSide });
+    const shell = def.build(dm);
+    const paintGeo = merge(shell.paint), detailGeo = merge(shell.d);
+    this.paintMat = new THREE.MeshLambertMaterial({ color: PAINTS[0].hex, flatShading: true });
     this.detailMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-    shell.paint.translate(0, -BODY_PIVOT, 0);
-    shell.detail.translate(0, -BODY_PIVOT, 0);
-    const pm = new THREE.Mesh(shell.paint, this.paintMat);
-    const dm = new THREE.Mesh(shell.detail, this.detailMat);
-    pm.castShadow = dm.castShadow = true;
-    pm.receiveShadow = dm.receiveShadow = true;
-    this.body.add(pm, dm);
+    paintGeo.translate(0, -dm.pivot, 0);
+    detailGeo.translate(0, -dm.pivot, 0);
+    const pm = new THREE.Mesh(paintGeo, this.paintMat);
+    const dmesh = new THREE.Mesh(detailGeo, this.detailMat);
+    pm.castShadow = dmesh.castShadow = true;
+    pm.receiveShadow = dmesh.receiveShadow = true;
+    this.body.add(pm, dmesh);
+    this._meshes = [pm, dmesh];
 
-    const wl = buildWheel(1), wr = buildWheel(-1);
+    const wl = buildWheel(dm, 1), wr = buildWheel(dm, -1);
     this.wheels = [];
     this.wheelPivots = [];
-    const pos = [[WX, WZ], [-WX, WZ], [WX, -WZ], [-WX, -WZ]];
+    const pos = [[dm.wx, dm.wz], [-dm.wx, dm.wz], [dm.wx, -dm.wzR], [-dm.wx, -dm.wzR]];
     for (let i = 0; i < 4; i++) {
       const pivot = new THREE.Group();
-      pivot.position.set(pos[i][0], WHEEL_R, pos[i][1]);
+      pivot.position.set(pos[i][0], dm.wheelR, pos[i][1]);
       const m = new THREE.Mesh(pos[i][0] > 0 ? wl : wr, this.detailMat);
       m.castShadow = true;
       pivot.add(m);
       this.group.add(pivot);
       this.wheels.push(m);
       this.wheelPivots.push(pivot);
+      this._meshes.push(m);
     }
     this.wheelLocal = pos;
+    this._ghost = false;
+    this._ghostMat = null;
 
     this.x = 0; this.y = 0; this.z = 0; this.yaw = 0;
     this.vx = 0; this.vz = 0; this.vy = 0; this.yawRate = 0;
@@ -228,7 +433,50 @@ export class Car {
     this._land = 0;
   }
 
-  setPaint(hex) { this.paintMat.color.set(hex); }
+  setPaint(hex) {
+    this.paintMat.color.set(hex);
+    if (this._ghostMat) this._ghostMat.color.set(hex).lerp(new THREE.Color('#ffffff'), 0.35);
+  }
+
+  // translucent single-tint look for ghost replays; reversible
+  setGhost(on) {
+    on = !!on;
+    if (on === this._ghost) return;
+    this._ghost = on;
+    if (on && !this._ghostMat) {
+      this._ghostMat = new THREE.MeshLambertMaterial({
+        color: this.paintMat.color.clone().lerp(new THREE.Color('#ffffff'), 0.35),
+        transparent: true, opacity: 0.35, depthWrite: false, flatShading: true,
+      });
+    }
+    for (const m of this._meshes) {
+      if (on) { m.userData.mat = m.material; m.material = this._ghostMat; m.castShadow = false; m.receiveShadow = false; }
+      else { m.material = m.userData.mat || m.material; m.castShadow = true; m.receiveShadow = m.parent === this.body; }
+    }
+  }
+
+  // place the visual directly (no physics), e.g. for ghost playback
+  setPose(x, y, z, yaw, pitch = 0, roll = 0, steer = 0, wheelSpin = 0) {
+    this.rx = x; this.ry = y; this.rz = z; this.ryaw = yaw;
+    this._pitch = pitch; this._roll = roll;
+    this.group.position.set(x, y, z);
+    this.group.rotation.set(pitch, yaw, roll);
+    this.body.rotation.set(0, 0, 0);
+    this.body.position.y = this.dims.pivot;
+    for (let i = 0; i < 4; i++) {
+      this.wheels[i].rotation.x = wheelSpin;
+      if (i < 2) this.wheelPivots[i].rotation.y = steer;
+    }
+  }
+
+  // the current rendered pose, for recording
+  getPose(out = {}) {
+    out.x = this.rx; out.y = this.ry; out.z = this.rz; out.yaw = this.ryaw;
+    out.pitch = this._pitch; out.roll = this._roll;
+    out.steer = this.wheelPivots[0].rotation.y;
+    out.wheelSpin = this.wheels[0].rotation.x;
+    return out;
+  }
 
   reset(stage, idx) {
     this._stage = stage;
@@ -249,6 +497,7 @@ export class Car {
   }
 
   step(dt, input, stage) {
+    const K = this.H;
     this._stage = stage;
     const P = this._prev; P.x = this.x; P.y = this.y; P.z = this.z; P.yaw = this.yaw;
     this.time += dt; this._lastDt = dt;
@@ -280,26 +529,26 @@ export class Car {
     const sp01 = Math.min(1, speed / 40);
     const s0 = this._sIn;
     const into = sIn !== 0 && Math.sign(sIn) === Math.sign(s0 || sIn) && Math.abs(sIn) >= Math.abs(s0);
-    const rate = into ? 5.5 - 2.5 * sp01 : 9;
+    const rate = into ? K.steerIn - K.steerInDrop * sp01 : K.steerOut;
     this._sIn += clamp(sIn - s0, -rate * dt, rate * dt);
     const sN = this._sIn;
-    const maxSteer = 0.55 - 0.40 * Math.min(1, speed / 42);
+    const maxSteer = K.lock0 - K.lockDrop * Math.min(1, speed / 42);
     this.steer = sN * maxSteer;
 
     const grip = stage.def.grip;
-    const baseLat = GRIP * grip * (1 - 0.25 * off);
+    const baseLat = GRIP * K.grip * grip * (1 - 0.25 * off);
     let aLong = 0, aLat = 0;
-    let beta = Math.atan2(vl, Math.abs(vf) + 1.5);
+    const beta = Math.atan2(vl, Math.abs(vf) + 1.5);
     if (contact) {
       // ---- longitudinal ----
       let drive = 0, decel = 0;
-      if (vf > -1) drive += thr * POWER * Math.max(0, 1 - vf / VMAX);
+      if (vf > -1) drive += thr * K.power * Math.max(0, 1 - vf / K.vmax);
       else drive += thr * 14;
       if (brk > 0) {
-        if (vf > 1) decel += brk * BRAKE;
+        if (vf > 1) decel += brk * K.brake;
         else if (vf > -REV_MAX) drive -= brk * REV_ACC * Math.min(1, (vf + REV_MAX) / 2);
       }
-      if (hand) decel += HAND_DEC;
+      if (hand) decel += K.handDec;
       if (thr < 0.05 && vf > 2) decel += 1.1 + 0.025 * vf; // engine braking
       decel += 0.25 + Math.abs(vf) * (0.03 + 0.17 * off) + off * 1.2;
       drive -= 9.81 * slope * 0.7;
@@ -313,39 +562,41 @@ export class Car {
       const fast = clamp((speed - 9) / 6, 0, 1);
       const turning = Math.abs(sN) > 0.4;
       let d = this.drift;
-      if (prevThr > 0.3 && thr < 0.2 && Math.abs(sN) > 0.7 && d < 0.7 * fast) d += 2.2 * fast * dt; // sustained lift-off oversteer
-      if (brk > 0.3 && vf > 1 && turning && d < 0.4 * brk * fast) d += (0.4 * brk * fast - d) * Math.min(1, 3 * dt); // trail-brake rotation
-      if (hand && speed > 4) d += (1 - d) * Math.min(1, 6 * dt);                        // handbrake
-      if (thr > 0.8 && Math.abs(sN) > 0.7 && speed > 7) d += thr * Math.max(0, 1.05 - grip) * (this.gear <= 2 ? 1.2 : 0.5) * dt; // power oversteer on loose surfaces
+      if (prevThr > 0.3 && thr < 0.2 && Math.abs(sN) > 0.7 && d < K.liftOff * fast) d += K.liftRate * fast * dt; // sustained lift-off
+      if (brk > 0.3 && vf > 1 && turning && d < K.trail * brk * fast) d += (K.trail * brk * fast - d) * Math.min(1, 3 * dt); // trail-brake
+      if (hand && speed > 4) d += (1 - d) * Math.min(1, 6 * dt);                                  // handbrake
+      if (thr > 0.8 && Math.abs(sN) > 0.7 && speed > 7) {                                         // power oversteer
+        d += thr * Math.max(0, 1.05 - grip + K.powerOS) * (this.gear <= 2 ? 1.2 : 0.5) * dt;
+      }
       const holding = d > 0.25 && thr > 0.4 && Math.abs(beta) > 0.1 && turning && Math.sign(sN) === Math.sign(this.yawRate);
-      if (holding && !hand) d = Math.max(d, Math.min(this.drift, 0.6)) - 0.08 * dt;
+      if (holding && !hand) d = Math.max(d, Math.min(this.drift, K.holdMax)) - 0.08 * dt;
       else if (!hand) d *= Math.exp(-(sN === 0 ? 2.8 : Math.sign(sN) !== Math.sign(this.yawRate) ? 3.5 : 1.6) * dt);
       this.drift = d = clamp(d, 0, 1);
 
       // ---- lateral grip with traction circle ----
       const use = Math.min(1, longUse / 16);
-      let maxLat = baseLat * (1 - 0.25 * use * use) * (1 - 0.2 * d);
-      if (hand) maxLat *= 0.55;
+      let maxLat = baseLat * (1 - 0.25 * use * use) * (1 - K.driftLatLoss * d);
+      if (hand) maxLat *= K.handLat;
       if (thr > 0.5 && d > 0.2 && Math.abs(vl) > 1.5) maxLat *= 0.9;
-      aLat = clamp(-vl * 14, -maxLat, maxLat);
+      aLat = clamp(-vl * K.latStiff, -maxLat, maxLat);
       vl += aLat * dt;
 
       // ---- yaw: proportional to steering, speed-limited near the grip limit ----
       const av = Math.max(Math.abs(vf), 4);
-      const wKin = Math.abs(vf) * Math.tan(maxSteer) / WB;
-      const wGrip = baseLat / av * (1.06 + 1.5 * d + (hand ? 1.8 : 0));
+      const wKin = Math.abs(vf) * Math.tan(maxSteer) / K.wb;
+      const wGrip = baseLat / av * (K.yawMargin + K.driftYaw * d + (hand ? K.handYaw : 0));
       const wMax = Math.min(wKin * (hand ? 1.35 : 1), wGrip);
       let target = sN * wMax * Math.sign(vf || 1);
-      // self-aligning toward the velocity; weaker while the slide is held on throttle,
+      // self-aligning toward the velocity; weaker while a slide is held on throttle,
       // stronger (counter-steer assist) when the player isn't steering into the slide
       const intoSlide = sN !== 0 && Math.sign(sN) === -Math.sign(beta);
-      let align = hand ? 0.5 : 1.45 - 0.8 * d * thr;
-      if (!intoSlide && !hand) align += 1.2;
+      let align = hand ? 0.5 : K.alignBase - K.alignHold * d * thr;
+      if (!intoSlide && !hand) align += K.assist;
       target += beta * align * Math.min(1, speed / 3);
-      // anti-spin: hard limit on slide angle
-      const bLim = hand ? 1.2 : 0.75;
+      // anti-spin: pull back hard past the car's slide limit
+      const bLim = hand ? 1.2 : K.betaLim + K.betaLimDrift * this.drift;
       if (Math.abs(beta) > bLim) target += Math.sign(beta) * (Math.abs(beta) - bLim) * 6;
-      this.yawRate += (target - this.yawRate) * Math.min(1, 10 * dt);
+      this.yawRate += (target - this.yawRate) * Math.min(1, K.yawResp * dt);
       aLong = (vf - v0) / dt;
     } else {
       this.yawRate *= 1 - 0.4 * dt;
@@ -406,17 +657,18 @@ export class Car {
     this.driftAngle = this.speed > 2 ? Math.atan2(vl2, Math.abs(this.vf)) : 0;
 
     // fake gearbox
+    const G = K.gears;
     const v = Math.abs(this.vf);
     if (this.vf < -0.5 && brk > 0 && thr < 0.1) this.gear = 0;
     else {
       if (this.gear === 0) this.gear = 1;
-      while (this.gear < 5 && v > GEAR_TOP[this.gear]) this.gear++;
-      while (this.gear > 1 && v < GEAR_TOP[this.gear - 1] - 2.5) this.gear--;
+      while (this.gear < 5 && v > G[this.gear]) this.gear++;
+      while (this.gear > 1 && v < G[this.gear - 1] - 2.5) this.gear--;
     }
     let rpmT;
     if (this.gear === 0) rpmT = 0.25 + 0.75 * Math.min(1, v / REV_MAX);
     else {
-      const lo = this.gear === 1 ? 0 : GEAR_TOP[this.gear - 1] - 2.5, hi = GEAR_TOP[this.gear];
+      const lo = this.gear === 1 ? 0 : G[this.gear - 1] - 2.5, hi = G[this.gear];
       rpmT = 0.25 + 0.75 * clamp((v - lo) / (hi - lo), 0, 1);
     }
     if (!contact || this.slip > 4) rpmT = Math.max(rpmT, 0.3 + 0.6 * thr);
@@ -426,11 +678,16 @@ export class Car {
 
   // two circles (front / rear axle) against the stage's round obstacles
   _collide(stage) {
+    const K = this.H, dm = this.dims;
+    const halfW = dm.wx + dm.wheelW * 0.5;
+    const rad = Math.max(0.8, halfW);
+    const e = 0.25 + 0.15 * (1 - K.mass);          // lighter cars bounce a little more
+    const yawK = 0.08 / K.mass;
     for (let k = 0; k < 2; k++) {
-      const arm = k === 0 ? 1.15 : -1.15;
+      const arm = k === 0 ? dm.wz * 0.92 : -dm.wzR * 0.92;
       const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
       const cx = this.x + fx * arm, cz = this.z + fz * arm;
-      stage.collide(cx, cz, 0.95, (o, dx, dz, rr) => {
+      stage.collide(cx, cz, rad, (o, dx, dz, rr) => {
         const d = Math.hypot(dx, dz) || 1e-3, nx = dx / d, nz = dz / d;
         const pen = rr - d;
         this.x += nx * pen; this.z += nz * pen;
@@ -440,17 +697,15 @@ export class Car {
         if (vn >= 0) return;
         const before = Math.hypot(this.vx, this.vz);
         const head = clamp(-vn / Math.max(before, 1), 0, 1); // 1 = head-on, 0 = grazing
-        // remove the normal component with a small bounce
-        const jn = -(1 + 0.25) * vn;
+        const jn = -(1 + e) * vn;
         this.vx += jn * nx; this.vz += jn * nz;
         // scrub the tangential part: little when grazing, a lot head-on
         const tvn = this.vx * nx + this.vz * nz;
         const tx = this.vx - tvn * nx, tz = this.vz - tvn * nz;
         const keep = 1 - 0.85 * head * head - 0.06;
         this.vx = tvn * nx + tx * keep; this.vz = tvn * nz + tz * keep;
-        // yaw from the off-centre hit, bounded
-        const cross = (fx * arm) * nz - (fz * arm) * nx; // r x n (y component sign)
-        this.yawRate = clamp(this.yawRate - cross * jn * 0.08, -2, 2);
+        const cross = (fx * arm) * nz - (fz * arm) * nx;
+        this.yawRate = clamp(this.yawRate - cross * jn * yawK, -2, 2);
         this.drift *= 0.5;
         const lost = before - Math.hypot(this.vx, this.vz);
         if (lost > 0.5) this.impact = Math.max(this.impact, lost);
@@ -460,14 +715,15 @@ export class Car {
 
   _poseFromGround(x, z, yaw, snap) {
     const st = this._stage; if (!st) return null;
+    const dm = this.dims;
     const sy = Math.sin(yaw), cy = Math.cos(yaw);
     for (let i = 0; i < 4; i++) {
       const [ax, az] = this.wheelLocal[i];
       this._wheelH[i] = st.height(x + cy * ax + sy * az, z - sy * ax + cy * az);
     }
     const [hFL, hFR, hRL, hRR] = this._wheelH;
-    const pitch = clamp(Math.atan2((hRL + hRR) - (hFL + hFR), 2 * 2 * WZ), -0.4, 0.4);
-    const roll = clamp(Math.atan2((hFL + hRL) - (hFR + hRR), 2 * 2 * WX), -0.4, 0.4);
+    const pitch = clamp(Math.atan2((hRL + hRR) - (hFL + hFR), 2 * (dm.wz + dm.wzR)), -0.4, 0.4);
+    const roll = clamp(Math.atan2((hFL + hRL) - (hFR + hRR), 2 * 2 * dm.wx), -0.4, 0.4);
     if (snap) { this._pitch = pitch; this._roll = roll; }
     return [pitch, roll];
   }
@@ -526,10 +782,10 @@ export class Car {
     }
     this._writePose(alpha);
     this.body.rotation.set(this._bPitch, 0, this._bRoll);
-    this.body.position.y = BODY_PIVOT + this._bob;
+    this.body.position.y = this.dims.pivot + this._bob;
 
     // wheels
-    const spin = this.grounded ? this.vf / WHEEL_R : this.throttle * 40;
+    const spin = this.grounded ? this.vf / this.dims.wheelR : this.throttle * 40;
     for (let i = 0; i < 4; i++) {
       this.wheels[i].rotation.x = (this.wheels[i].rotation.x + spin * dt) % (Math.PI * 2);
       if (i < 2) this.wheelPivots[i].rotation.y = this.steer;
@@ -544,8 +800,16 @@ export class Car {
   }
 }
 
+// a model-only group (no physics) for menu turntables
+export function buildCarPreview(carId, paintHex) {
+  const c = new Car(carId);
+  if (paintHex) c.setPaint(paintHex);
+  c.group.userData.car = c;
+  return c.group;
+}
+
 // ---------------------------------------------------------------------------
-// Autopilot: pure pursuit + curvature-based speed planning
+// Autopilot: pure pursuit + curvature-based speed planning (scaled per car)
 // ---------------------------------------------------------------------------
 export function autopilot(car, stage) {
   const st = car._ap || (car._ap = { slowSince: -1, startT: car.time, lastT: car.time });
@@ -563,6 +827,7 @@ export function autopilot(car, stage) {
     }
   } else st.slowSince = -1;
 
+  const K = car.H || BASE;
   const _ai = { steer: 0, throttle: 0, brake: 0, hand: false };
   const speed = car.speed, i0 = car.idx, N = stage.n;
   const look = clamp(6 + speed * 0.55, 8, 40);
@@ -574,19 +839,20 @@ export function autopilot(car, stage) {
   const L = Math.max(4, Math.hypot(stage.sx[j] - car.x, stage.sz[j] - car.z));
   const wDes = 2 * Math.sin(diff) / L * Math.max(speed, 3);
   const av = Math.max(Math.abs(car.vf), 4);
-  const maxSteer = 0.55 - 0.40 * Math.min(1, speed / 42);
-  const wMax = Math.max(0.05, Math.min(Math.abs(car.vf) * Math.tan(maxSteer) / WB, GRIP * stage.def.grip * (1 - 0.25 * car.offroad) / av * 1.06));
+  const maxSteer = K.lock0 - K.lockDrop * Math.min(1, speed / 42);
+  const lat = GRIP * K.grip * stage.def.grip;
+  const wMax = Math.max(0.05, Math.min(Math.abs(car.vf) * Math.tan(maxSteer) / K.wb, lat * (1 - 0.25 * car.offroad) / av * K.yawMargin));
   _ai.steer = clamp(wDes / wMax * 1.25 + diff * 0.5, -1, 1);
 
   // speed plan: allowed speed at each upcoming sample, relaxed by braking distance
-  const maxLat = GRIP * stage.def.grip;
   const span = Math.round((15 + speed * 1.6) / STEP);
-  let vT = 60;
+  const bDec = 9 * K.brake / 17;
+  let vT = 70;
   for (let k = 0; k <= span; k++) {
     const i = Math.min(N - 1, i0 + k);
     const c = Math.abs(stage.curv[i]);
-    const vc = c > 1e-4 ? Math.sqrt(maxLat * 0.75 / c) : 60;
-    const v = Math.sqrt(vc * vc + 2 * 9 * k * STEP);
+    const vc = c > 1e-4 ? Math.sqrt(lat * 0.75 / c) : 70;
+    const v = Math.sqrt(vc * vc + 2 * bDec * k * STEP);
     if (v < vT) vT = v;
   }
   // get back onto the road gently when off it
