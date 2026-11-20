@@ -60,10 +60,20 @@
           <button class="seg-btn" data-mode="solo" role="radio">Solo<span class="seg-key kbd-only">1</span></button>
           <button class="seg-btn" data-mode="duel" role="radio">Duel <small>2P</small><span class="seg-key kbd-only">2</span></button>
         </div>
-        <span class="mode-note" id="modeNote"></span>
+        <div class="seg view-seg" role="tablist" aria-label="Menu view">
+          <button class="seg-btn view-btn" data-view="stages" role="tab">Stages</button>
+          <button class="seg-btn view-btn" data-view="garage" role="tab">Garage<span class="new-dot hidden" id="garageNew">NEW</span><span class="seg-key kbd-only">V</span></button>
+        </div>
       </div>
+      <div class="mode-note" id="modeNote"></div>
 
-      <section class="menu-sec">
+      <section class="menu-sec garage-sec hidden" id="garageSec">
+        <div class="picker" id="pick0"></div>
+        <div class="picker p2-only" id="pick1"></div>
+        <div class="duel-note p2-only">Duel is party play: all four cars are open to both players.</div>
+      </section>
+
+      <section class="menu-sec stages-sec" id="stagesSec">
         <div class="sec-head stage-head"><h2>Stage</h2><span class="sec-hint kbd-only">&larr; &rarr; stage &middot; &uarr; &darr; region</span></div>
         <div class="tabs" id="regionTabs" role="tablist" aria-label="Regions"></div>
         <div class="region-blurb" id="regionBlurb"></div>
@@ -83,6 +93,7 @@
         <span><kbd>Esc</kbd> pause</span>
         <span><kbd>T</kbd> start rally</span>
         <span><kbd>G</kbd> ghost</span>
+        <span><kbd>V</kbd> garage</span>
       </div>
       <div class="legend legend-duel">
         <span class="lg-p">P1</span>
@@ -101,6 +112,7 @@
         <span><kbd>Esc</kbd> pause</span>
         <span><kbd>M</kbd> mute</span>
         <span><kbd>T</kbd> rally</span>
+        <span><kbd>V</kbd> garage</span>
       </div>
       <div class="legend legend-touch">
         <span>&#9664; &#9654; steer on the left</span>
@@ -109,14 +121,7 @@
       </div>
       <!-- pinned to the bottom of the scrolling panel: paint + START are always reachable -->
       <div class="menu-foot">
-        <section class="paint-sec">
-          <h2>Paint</h2>
-          <div class="paint-rows">
-            <div class="paint-row"><span class="pl-label">P1</span><div class="paints" id="paints"></div></div>
-            <div class="paint-row p2-only"><span class="pl-label">P2</span><div class="paints" id="paints2"></div></div>
-          </div>
-          <span class="sec-hint" id="paintName"></span>
-        </section>
+        <div class="foot-summary" id="footSummary"></div>
         <div class="menu-actions">
           <button class="btn primary big" id="startBtn">START<span class="btn-key">Enter</span></button>
           <button class="btn ghost toggle" id="ghostBtn" aria-pressed="true" title="Race against your best run (G)">Ghost on</button>
@@ -146,6 +151,7 @@
       <div class="fin-time" id="finTime">0:00.000</div>
       <div class="fin-best" id="finBest"></div>
       <div class="fin-medal" id="finMedal"></div>
+      <div class="fin-unlock" id="finUnlock"></div>
       <table class="splits" id="finSplits"></table>
       <div class="panel-btns">
         <button class="btn primary" id="retryBtn">Retry<span class="btn-key">R</span></button>

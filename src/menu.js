@@ -1,9 +1,9 @@
 // Main menu: medal points, mode toggle, region tabs (+ rally strip) and stage cards, the daily card, paints, mute.
-import { PAINTS } from './car.js';
 import { $, fmt, esc } from './util.js';
 import { getBest } from './storage.js';
 import { REGIONS, getDef, regionOf, lengthOf, conditions, dailyDef } from './catalog.js';
 import { condIcons, medalIcon, targetsHtml } from './hud.js';
+import { renderPicker, newCars, carById, getBestCar, lockIcon } from './garage.js';
 import { medalTimes, medalFor, medalPoints, MAX_POINTS, regionMedals, rallyStages, getRallyBest, trophyFor } from './progress.js';
 
 let viewRegion = null; // region whose cards are shown (tabs only change the view, not the selection)
@@ -15,7 +15,11 @@ function meta(def) {
   return `<span class="card-meta"><b>${km}</b><span class="${b ? 'has-best' : ''}">${b ? fmt(b.t) : 'no time'}</span></span>
     <span class="card-medal">${medalIcon(m)}</span>`;
 }
-const targets = (def, selected) => (selected && medalTimes(def) ? `<span class="card-targets">${targetsHtml(medalTimes(def))}</span>` : '');
+const targets = (def, selected) => {
+  if (!selected || !medalTimes(def)) return '';
+  const bc = getBest(def.id) && getBestCar(def.id);
+  return `<span class="card-targets">${targetsHtml(medalTimes(def))}${bc ? `<span class="best-car">best in ${esc(bc.name)}</span>` : ''}</span>`;
+};
 
 function stageCard(def, n, selected) {
   return `<button class="card${selected ? ' sel' : ''}" data-id="${esc(def.id)}">
@@ -74,15 +78,27 @@ export function renderMenu(ctx) {
   }
 
   const [p1, p2] = ctx.players;
-  const paintRow = (el, p) => {
-    el.innerHTML = PAINTS.map((c, i) => `<button class="swatch${i === p.paintIdx ? ' sel' : ''}" data-i="${i}" style="background:${c.hex}" aria-label="${p.name} ${c.name}" title="${c.name}"></button>`).join('');
-    for (const b of el.children) b.addEventListener('click', () => ctx.onPaint(p.i, +b.dataset.i));
-  };
-  paintRow($('paints'), p1); paintRow($('paints2'), p2);
   const duel = ctx.mode === 'duel', avail = ctx.duelAvailable;
-  $('paintName').textContent = duel ? `${p1.paint.name} vs ${p2.paint.name}` : p1.paint.name;
   $('menu').classList.toggle('duel', duel);
-  for (const b of document.querySelectorAll('.seg-btn')) {
+  // RACE view (stages) vs GARAGE view (car + paint); START stays pinned in the footer for both
+  const garage = ctx.view === 'garage';
+  $('garageSec').classList.toggle('hidden', !garage);
+  $('stagesSec').classList.toggle('hidden', garage);
+  $('menu').classList.toggle('garage-view', garage);
+  for (const b of document.querySelectorAll('.view-btn')) { b.classList.toggle('sel', b.dataset.view === ctx.view); b.setAttribute('aria-selected', String(b.dataset.view === ctx.view)); }
+  $('garageNew').classList.toggle('hidden', !newCars().length);
+  if (garage) {
+    [p1, p2].forEach((p, i) => {
+      if (i === 1 && !duel) return;
+      renderPicker($('pick' + i), { player: p, carId: ctx.cars[i], allUnlocked: duel, points: pts, onCar: (d) => ctx.onCar(i, d), onPaint: (idx) => ctx.onPaint(i, idx) });
+    });
+  }
+  // footer: what you're about to drive, and why START is blocked (a locked car), if it is
+  const chip = (p, i) => { const c = carById(ctx.cars[i]); return `<span class="fs-car"><i style="background:${p.paint.hex}"></i>${duel ? `<em>${p.name}</em> ` : ''}${esc(c ? c.name : '')}</span>`; };
+  $('footSummary').innerHTML = (duel ? chip(p1, 0) + chip(p2, 1) : chip(p1, 0)) + (ctx.blocked ? `<span class="fs-block">${lockIcon} ${esc(ctx.blocked)}</span>` : `<span class="fs-stage">${esc(getDef(ctx.sel).name)}</span>`);
+  $('startBtn').disabled = !!ctx.blocked;
+  for (const b of document.querySelectorAll('.rally-btn')) b.disabled = !!ctx.blocked;
+  for (const b of document.querySelectorAll('.seg-btn[data-mode]')) {
     b.classList.toggle('sel', b.dataset.mode === ctx.mode);
     b.setAttribute('aria-checked', String(b.dataset.mode === ctx.mode));
   }

@@ -1,7 +1,7 @@
 // A racer: car, chase camera, viewport, timing and HUD pane. Solo is one Player, duel is two.
 import * as THREE from 'three';
 import { clamp, smoothstep } from './track.js';
-import { Car, PAINTS } from './car.js';
+import { Car, CARS, PAINTS } from './car.js';
 import { angDiff, damp } from './util.js';
 import { store } from './storage.js';
 import { createPane } from './hud.js';
@@ -13,14 +13,18 @@ export const CAMS = [
   { name: 'TOP', dist: 4.5, h: 27, look: 3 },
 ];
 export const paintKey = (i) => (i ? 'dustline.paint2' : 'dustline.paint');
+export const carKey = (i) => (i ? 'dustline.car2' : 'dustline.car');
+export const carDef = (id) => CARS.find((c) => c.id === id) || null;
 
 export class Player {
   constructor(i, scene, panesEl) {
     this.i = i;
     this.name = 'P' + (i + 1);
+    this.scene = scene;
     this.car = new Car();
     scene.add(this.car.group);
     this.lights = new Headlights(this.car);
+    this.camScale = 1;
     this.cam = new THREE.PerspectiveCamera(50, 1, 0.3, 420);
     this.camPos = new THREE.Vector3(); this.camLook = new THREE.Vector3();
     this.camYaw = 0; this.camSnap = true; this.camMode = 0; this.shake = 0; this.orbitA = i * 2.1;
@@ -31,6 +35,28 @@ export class Player {
     this.resetRun();
   }
   get paint() { return PAINTS[this.paintIdx]; }
+  get carId() { return this.car.carId; }
+  // swap the car model + handling, keeping paint, headlight state and pose; returns true if it changed
+  setCar(id) {
+    const def = carDef(id) || CARS[0];
+    if (def.id === this.car.carId) return false;
+    const old = this.car, lightsOn = this.lights.group.visible, vis = old.group.visible;
+    this.lights.dispose();
+    this.scene.remove(old.group);
+    old.group.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
+    });
+    this.car = new Car(def.id);
+    this.car.group.visible = vis;
+    this.scene.add(this.car.group);
+    this.lights = new Headlights(this.car);
+    this.lights.setEnabled(lightsOn);
+    // camera distance scales gently with the car's length (Rook ~4.1 m is the reference)
+    this.camScale = clamp(this.lights.lengthM / 4.1, 0.9, 1.12);
+    this.car.setPaint(this.paint.hex);
+    return true;
+  }
   setPaint(idx) {
     this.paintIdx = idx; this.car.setPaint(this.paint.hex);
     this.ui.tag.style.background = this.paint.hex;
@@ -79,7 +105,7 @@ export function updateCamera(p, dt, stage, orbitMode) {
     }
     const target = Math.atan2(fx, fz);
     p.camYaw = p.camSnap ? target : p.camYaw + angDiff(target, p.camYaw) * damp(3.2, dt);
-    const sk = clamp(sp / 40, 0, 1), dist = c.dist * (1 + sk * 0.2), h = c.h * (1 + sk * 0.06);
+    const sk = clamp(sp / 40, 0, 1), cs = p.camScale || 1, dist = c.dist * cs * (1 + sk * 0.2), h = c.h * cs * (1 + sk * 0.06);
     const sx = Math.sin(p.camYaw), sz = Math.cos(p.camYaw);
     _v.set(car.x - sx * dist, car.y + h, car.z - sz * dist);
     _l.set(car.x + sx * c.look, car.y + 0.8, car.z + sz * c.look);

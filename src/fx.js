@@ -137,16 +137,23 @@ function glowTexture() {
 }
 // warm spot lights + glow sprites parented to the car group (local +Z is forward, Y up, ground at 0)
 export class Headlights {
+  // lamp, pod and tail positions come from the car's own model bounds (works for any car in the roster)
   constructor(car) {
     this.group = new THREE.Group();
     this.group.visible = false;
+    car.group.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(car.body), inv = new THREE.Matrix4().copy(car.group.matrixWorld).invert();
+    box.applyMatrix4(inv);
+    const front = box.max.z, rear = box.min.z, half = Math.max(0.5, box.max.x - 0.25), top = box.max.y;
+    const lampY = Math.min(0.85, Math.max(0.55, top * 0.45));
+    this.lengthM = front - rear;
     const warm = 0xffe2b0;
     // mounted a little above the roof with no distance falloff (decay 0, soft cutoff at 72 m): real lamp height
     // would leave the far road black and burn a hotspot right at the bumper
     for (const sx of [-1, 1]) {
       const s = new THREE.SpotLight(warm, 5, 72, 0.5, 0.7, 0);
-      s.position.set(sx * 0.5, 2.4, 0.6);
-      s.target.position.set(sx * 1.6, 0, 26);
+      s.position.set(sx * 0.5, top + 0.8, front - 1.4);
+      s.target.position.set(sx * 1.6, 0, front + 24);
       s.castShadow = false;
       this.group.add(s, s.target);
     }
@@ -155,11 +162,14 @@ export class Headlights {
       m.scale.set(size, size, 1); m.position.set(x, y, z); this.group.add(m);
     };
     for (const sx of [-1, 1]) {
-      sprite(0xffe9c4, 0.75, sx * 0.58, 0.72, 2.14, 0.7); // lamp halo
-      sprite(0xfff3dc, 0.4, sx * 0.24, 1.18, 1.9, 0.55); // roof-pod lamps
-      sprite(0xff2a1a, 0.75, sx * 0.6, 0.84, -2.14, 0.8); // tail glow
+      sprite(0xffe9c4, 0.75, sx * half * 0.78, lampY, front + 0.04, 0.7); // lamp halo
+      sprite(0xff2a1a, 0.75, sx * half * 0.8, lampY + 0.1, rear - 0.04, 0.8); // tail glow
     }
     car.group.add(this.group);
   }
   setEnabled(on) { this.group.visible = on; }
+  dispose() {
+    this.group.traverse((o) => { if (o.material) o.material.dispose(); if (o.dispose && o.isLight) o.dispose(); });
+    if (this.group.parent) this.group.parent.remove(this.group);
+  }
 }
