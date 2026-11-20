@@ -114,7 +114,7 @@ class Dust {
     this.rot[i * 3] = Math.random() * 6; this.rot[i * 3 + 1] = Math.random() * 6; this.rot[i * 3 + 2] = Math.random() * 6;
   }
   update(dt) {
-    const o = this.o, drag = Math.exp(-2.2 * dt);
+    const o = this.o, drag = Math.exp(-2.2 * dt), cp = camera.position;
     for (let i = 0; i < DUST_N; i++) {
       const t = this.age[i] / this.life[i];
       if (t >= 1) { o.scale.setScalar(0); o.position.set(0, -999, 0); o.updateMatrix(); this.mesh.setMatrixAt(i, o.matrix); continue; }
@@ -122,7 +122,10 @@ class Dust {
       const k = i * 3;
       this.v[k] *= drag; this.v[k + 2] *= drag; this.v[k + 1] = this.v[k + 1] * drag + 0.25 * dt;
       this.p[k] += this.v[k] * dt; this.p[k + 1] += this.v[k + 1] * dt; this.p[k + 2] += this.v[k + 2] * dt;
-      const s = Math.min(DUST_MAX, this.size[i] * (0.45 + 1.35 * smoothstep(0, 0.3, t))) * (1 - smoothstep(0.35, 1, t));
+      let s = Math.min(DUST_MAX, this.size[i] * (0.45 + 1.35 * smoothstep(0, 0.3, t))) * (1 - smoothstep(0.35, 1, t));
+      // puffs drifting toward the lens fade out so they never become a wall across the screen
+      const dx = this.p[k] - cp.x, dy = this.p[k + 1] - cp.y, dz = this.p[k + 2] - cp.z;
+      s *= smoothstep(5, 10, Math.sqrt(dx * dx + dy * dy + dz * dz));
       o.position.set(this.p[k], this.p[k + 1], this.p[k + 2]);
       o.rotation.set(this.rot[k] + t, this.rot[k + 1] + t * 0.7, this.rot[k + 2]);
       o.scale.set(s, s * 0.8, s);
@@ -201,7 +204,6 @@ function setScreen() {
 
 function startStage(i) {
   i = ((i | 0) % STAGES.length + STAGES.length) % STAGES.length;
-  sound.resume();
   withLoading(i, () => {
     sel = i;
     loadStage(i);
@@ -377,7 +379,7 @@ function updateCamera(dt) {
     // side-on orbit (never straight behind, where the dust plume trails), high enough to look over it
     orbitA += dt * 0.12;
     const a = car.yaw + Math.PI * 0.55 + Math.sin(orbitA) * 0.85;
-    const R = state === 'menu' ? 18 : 12, H = state === 'menu' ? 8 : 5.5;
+    const R = state === 'menu' ? 17 : 14, H = state === 'menu' ? 9.5 : 6.5;
     _v.set(car.x + Math.sin(a) * R, car.y + H, car.z + Math.cos(a) * R);
     _l.set(car.x, car.y + 0.8, car.z);
     camYaw = car.yaw;
@@ -533,7 +535,7 @@ function stepPhysics(dt) {
   if (state === 'menu') input = autopilot(car, stage);
   else if (state === 'countdown') input = HOLD;
   else if (state === 'race') input = auto ? autopilot(car, stage) : readInput();
-  else input = { ...autopilot(car, stage), throttle: 0, brake: 0.55, hand: false }; // finish: roll to a stop
+  else input = { ...autopilot(car, stage), throttle: 0, brake: car.vf > 1 ? 0.55 : 0, hand: car.vf <= 1 }; // finish: stop, never reverse
   car.step(dt, input, stage);
   if (state === 'race') { raceTime += dt; checkProgress(); }
 }
