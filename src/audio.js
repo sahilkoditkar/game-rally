@@ -1,16 +1,29 @@
 // Dustline — fully procedural WebAudio sound (no assets, no dependencies).
 //
-// Graph (built lazily on first resume()):
+// Several Sound instances (e.g. split-screen duel) share ONE AudioContext,
+// ONE master chain and ONE noise buffer, created lazily on the first resume().
 //
-//   saw A ─┐
-//   saw B ─┼─> amGain ─> shaper ─> lowpass ─> engineGain ─┐
-//   sub   ─┘     ^ (LFO at half firing rate)              │
-//                                                         ├─> master ─> compressor ─> destination
-//   noise ─> bandpass ─> lowpass ─> gravelGain ───────────┤
-//   noise ─> bandpass (resonant) ─> slideGain ────────────┤
-//   impacts / beeps (one-shot nodes) ─────────────────────┘
+// Per instance:
+//   PeriodicWave A ─┐
+//   PeriodicWave B ─┼─> amGain ─> lowpass ─> engineGain ─┐
+//   sine sub      ─┘     ^ (gentle LFO)                  │
+//   noise ─> bandpass ─> lowpass ─> gravelGain ──────────┼─> out (opts.gain) ─> panner (opts.pan) ─┐
+//   noise ─> bandpass ─> slideGain ──────────────────────┤                                         │
+//   impacts / beeps (one-shot) ──────────────────────────┘                                         │
+// Shared:                                                                                          │
+//   master (0.3, mute) ─> high-shelf −6 dB @3.2 kHz ─> lowpass 7 kHz ─> compressor ─> destination <┘
 
-const MASTER_LEVEL = 0.35;
+const MASTER_LEVEL = 0.3;
+
+// Module-level shared state.
+const shared = {
+  ctx: null,
+  failed: false,
+  muted: false,
+  master: null,
+  noiseBuf: null,
+  wave: null,
+};
 
 function clamp(v, lo, hi) {
   v = Number(v);
@@ -18,59 +31,143 @@ function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-function makeShaperCurve(amount) {
-  const n = 1024;
-  const curve = new Float32Array(n);
-  const k = amount;
-  for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * 2 - 1;
-    // Soft asymmetric clip: a little even-harmonic rasp.
-    curve[i] = Math.tanh(k * x + 0.15 * x * x) / Math.tanh(k + 0.15);
+function ensureShared() {
+  if (shared.ctx) return shared.ctx;
+  if (shared.failed) return null;
+  const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+  if (!AC) {
+    shared.failed = true;
+    return null;
   }
-  return curve;
+  const ctx = new AC();
+  const t = ctx.currentTime;
+
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -20;
+  comp.knee.value = 14;
+  comp.ratio.value = 3;
+  comp.attack.value = 0.01;
+  comp.release.value = 0.25;
+  comp.connect(ctx.destination);
+
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 7000;
+  lp.Q.value = 0.5;
+  lp.connect(comp);
+
+  const shelf = ctx.createBiquadFilter();
+  shelf.type = 'highshelf';
+  shelf.frequency.value = 3200;
+  shelf.gain.value = -6;
+  shelf.connect(lp);
+
+  const master = ctx.createGain();
+  master.gain.value = 0;
+  master.gain.setTargetAtTime(shared.muted ? 0 : MASTER_LEVEL, t, 0.15);
+  master.connect(shelf);
+
+  // Pink-ish → brown-ish noise: Paul Kellet's pink filter, then a gentle one-pole lowpass.
+  const len = Math.floor(ctx.sampleRate * 2);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, lpState = 0, peak = 0;
+  for (let i = 0; i < len; i++) {
+    const w = Math.random() * 2 - 1;
+    b0 = 0.99886 * b0 + w * 0.0555179;
+    b1 = 0.99332 * b1 + w * 0.0750759;
+    b2 = 0.969 * b2 + w * 0.153852;
+    b3 = 0.8665 * b3 + w * 0.3104856;
+    b4 = 0.55 * b4 + w * 0.5329522;
+    b5 = -0.7616 * b5 - w * 0.016898;
+    const pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362;
+    b6 = w * 0.115926;
+    lpState += 0.35 * (pink - lpState);
+    d[i] = lpState;
+    const a = Math.abs(lpState);
+    if (a > peak) peak = a;
+  }
+  // Remove DC and normalise; crossfade the loop seam.
+  let mean = 0;
+  for (let i = 0; i < len; i++) mean += d[i];
+  mean /= len;
+  const norm = peak > 0 ? 0.9 / peak : 1;
+  for (let i = 0; i < len; i++) d[i] = (d[i] - mean) * norm;
+  const fade = Math.floor(ctx.sampleRate * 0.02);
+  for (let i = 0; i < fade; i++) {
+    const k = i / fade;
+    d[i] = d[i] * k + d[len - fade + i] * (1 - k);
+  }
+
+  // Band-limited, rolled-off harmonic series for a rounded engine tone.
+  const N = 14;
+  const real = new Float32Array(N + 1);
+  const imag = new Float32Array(N + 1);
+  for (let n = 1; n <= N; n++) {
+    // Odd harmonics a bit stronger (4-cyl "purr"), steep roll-off.
+    const odd = n % 2 === 1 ? 1 : 0.7;
+    imag[n] = (odd / Math.pow(n, 1.7)) * (n === 2 ? 1.2 : 1);
+  }
+  const wave = ctx.createPeriodicWave(real, imag);
+
+  shared.ctx = ctx;
+  shared.master = master;
+  shared.noiseBuf = buf;
+  shared.wave = wave;
+  return ctx;
+}
+
+function applyMasterMute() {
+  if (!shared.ctx || !shared.master) return;
+  const t = shared.ctx.currentTime;
+  const g = shared.master.gain;
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(g.value, t);
+  g.setTargetAtTime(shared.muted ? 0 : MASTER_LEVEL, t, 0.1);
 }
 
 export class Sound {
-  constructor() {
-    this.muted = false;
+  constructor(opts = {}) {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    this._pan = o.pan === undefined ? 0 : clamp(o.pan, -1, 1);
+    this._gain = o.gain === undefined ? 1 : clamp(o.gain, 0, 4);
     this.ctx = null;
-    this._failed = false;
+    this._built = false;
     this._lastImpactTime = -1;
     this._lastImpactStrength = 0;
   }
 
+  // Mute state is shared by all instances (it drives the shared master gain),
+  // so reading `muted` on any instance reflects the global state.
+  get muted() {
+    return shared.muted;
+  }
+  set muted(v) {
+    this.setMuted(v);
+  }
+
   resume() {
     try {
-      if (!this.ctx) {
-        if (this._failed) return;
-        const AC =
-          typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
-        if (!AC) {
-          this._failed = true;
-          return;
-        }
-        this.ctx = new AC();
+      const ctx = ensureShared();
+      if (!ctx) return;
+      if (!this._built) {
+        this.ctx = ctx;
         this._build();
+        this._built = true;
       }
-      if (this.ctx.state === 'suspended') {
-        const p = this.ctx.resume();
+      if (ctx.state === 'suspended') {
+        const p = ctx.resume();
         if (p && typeof p.catch === 'function') p.catch(() => {});
       }
     } catch (e) {
-      // Never throw from a user gesture handler.
-      if (!this.ctx) this._failed = true;
+      /* never throw from a user gesture handler */
     }
   }
 
   setMuted(m) {
-    this.muted = !!m;
-    if (!this.ctx) return;
+    shared.muted = !!m;
     try {
-      const t = this.ctx.currentTime;
-      const g = this.master.gain;
-      g.cancelScheduledValues(t);
-      g.setValueAtTime(g.value, t);
-      g.setTargetAtTime(this.muted ? 0 : MASTER_LEVEL, t, 0.08);
+      applyMasterMute();
     } catch (e) {
       /* ignore */
     }
@@ -80,47 +177,45 @@ export class Sound {
     const ctx = this.ctx;
     const t = ctx.currentTime;
 
-    // --- Output chain ---
-    this.comp = ctx.createDynamicsCompressor();
-    this.comp.threshold.value = -18;
-    this.comp.knee.value = 12;
-    this.comp.ratio.value = 4;
-    this.comp.attack.value = 0.005;
-    this.comp.release.value = 0.2;
-    this.comp.connect(ctx.destination);
-
-    this.master = ctx.createGain();
-    this.master.gain.value = 0;
-    this.master.gain.setTargetAtTime(this.muted ? 0 : MASTER_LEVEL, t, 0.1);
-    this.master.connect(this.comp);
+    // --- Instance output: gain → panner → shared master ---
+    this.out = ctx.createGain();
+    this.out.gain.value = this._gain;
+    let tail = this.out;
+    if (typeof ctx.createStereoPanner === 'function') {
+      this.panner = ctx.createStereoPanner();
+      this.panner.pan.value = this._pan;
+      this.out.connect(this.panner);
+      tail = this.panner;
+    }
+    tail.connect(shared.master);
 
     // --- Engine ---
     const f0 = 55;
     this.oscA = ctx.createOscillator();
-    this.oscA.type = 'sawtooth';
+    this.oscA.setPeriodicWave(shared.wave);
     this.oscA.frequency.value = f0;
     this.oscB = ctx.createOscillator();
-    this.oscB.type = 'sawtooth';
+    this.oscB.setPeriodicWave(shared.wave);
     this.oscB.frequency.value = f0;
-    this.oscB.detune.value = 11; // cents, slow beating = raspy
+    this.oscB.detune.value = 5;
     this.oscSub = ctx.createOscillator();
-    this.oscSub.type = 'square';
+    this.oscSub.type = 'sine';
     this.oscSub.frequency.value = f0 * 0.5;
 
     const gA = ctx.createGain();
-    gA.gain.value = 0.4;
+    gA.gain.value = 0.42;
     const gB = ctx.createGain();
-    gB.gain.value = 0.32;
+    gB.gain.value = 0.3;
     const gSub = ctx.createGain();
-    gSub.gain.value = 0.22;
+    gSub.gain.value = 0.45;
 
     this.amGain = ctx.createGain();
     this.amGain.gain.value = 1;
     this.lfo = ctx.createOscillator();
-    this.lfo.type = 'triangle';
+    this.lfo.type = 'sine';
     this.lfo.frequency.value = f0 * 0.5;
     this.amDepth = ctx.createGain();
-    this.amDepth.gain.value = 0.25;
+    this.amDepth.gain.value = 0.08;
     this.lfo.connect(this.amDepth);
     this.amDepth.connect(this.amGain.gain);
 
@@ -131,73 +226,64 @@ export class Sound {
     gB.connect(this.amGain);
     gSub.connect(this.amGain);
 
-    this.shaper = ctx.createWaveShaper();
-    this.shaper.curve = makeShaperCurve(2.2);
-    this.shaper.oversample = '2x';
-
     this.engineLP = ctx.createBiquadFilter();
     this.engineLP.type = 'lowpass';
-    this.engineLP.frequency.value = 500;
-    this.engineLP.Q.value = 0.9;
+    this.engineLP.frequency.value = 350;
+    this.engineLP.Q.value = 0.6;
 
     this.engineGain = ctx.createGain();
     this.engineGain.gain.value = 0;
 
-    this.amGain.connect(this.shaper);
-    this.shaper.connect(this.engineLP);
+    this.amGain.connect(this.engineLP);
     this.engineLP.connect(this.engineGain);
-    this.engineGain.connect(this.master);
+    this.engineGain.connect(this.out);
 
-    // --- Noise buffer (2 s white, looped) ---
-    const len = Math.floor(ctx.sampleRate * 2);
-    this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = this.noiseBuf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-
-    // Gravel / surface rumble
+    // --- Gravel / surface bed ---
     this.gravelSrc = ctx.createBufferSource();
-    this.gravelSrc.buffer = this.noiseBuf;
+    this.gravelSrc.buffer = shared.noiseBuf;
     this.gravelSrc.loop = true;
     this.gravelBP = ctx.createBiquadFilter();
     this.gravelBP.type = 'bandpass';
-    this.gravelBP.frequency.value = 600;
-    this.gravelBP.Q.value = 0.7;
+    this.gravelBP.frequency.value = 300;
+    this.gravelBP.Q.value = 0.6;
     this.gravelLP = ctx.createBiquadFilter();
     this.gravelLP.type = 'lowpass';
-    this.gravelLP.frequency.value = 1800;
+    this.gravelLP.frequency.value = 1000;
+    this.gravelLP.Q.value = 0.5;
     this.gravelGain = ctx.createGain();
     this.gravelGain.gain.value = 0;
     this.gravelSrc.connect(this.gravelBP);
     this.gravelBP.connect(this.gravelLP);
     this.gravelLP.connect(this.gravelGain);
-    this.gravelGain.connect(this.master);
+    this.gravelGain.connect(this.out);
 
-    // Tyre slide scrub
+    // --- Tyre slide scrub ---
     this.slideSrc = ctx.createBufferSource();
-    this.slideSrc.buffer = this.noiseBuf;
+    this.slideSrc.buffer = shared.noiseBuf;
     this.slideSrc.loop = true;
-    this.slideSrc.playbackRate.value = 0.93; // decorrelate from gravel path
+    this.slideSrc.playbackRate.value = 1.13;
     this.slideBP = ctx.createBiquadFilter();
     this.slideBP.type = 'bandpass';
-    this.slideBP.frequency.value = 1500;
-    this.slideBP.Q.value = 2.2;
+    this.slideBP.frequency.value = 800;
+    this.slideBP.Q.value = 1.2;
     this.slideGain = ctx.createGain();
     this.slideGain.gain.value = 0;
     this.slideSrc.connect(this.slideBP);
     this.slideBP.connect(this.slideGain);
-    this.slideGain.connect(this.master);
+    this.slideGain.connect(this.out);
 
-    // Start everything; levels stay at zero until update() says otherwise.
+    // Random loop offsets so two instances don't phase-align.
+    const off = Math.random() * 1.8;
     this.oscA.start(t);
     this.oscB.start(t);
     this.oscSub.start(t);
     this.lfo.start(t);
-    this.gravelSrc.start(t, 0);
-    this.slideSrc.start(t, 0.97);
+    this.gravelSrc.start(t, off);
+    this.slideSrc.start(t, (off + 0.9) % 1.9);
   }
 
   update(dt, s) {
-    if (!this.ctx || !this.engineGain) return;
+    if (!this._built || !this.engineGain) return;
     try {
       s = s || {};
       const t = this.ctx.currentTime;
@@ -209,110 +295,112 @@ export class Sound {
       const off = clamp(s.offroad, 0, 1);
       const grounded = s.grounded !== false;
 
-      // --- Engine ---
+      // --- Engine: warm purr, slow glides ---
       const f = 55 + rpm * 205;
-      const tcPitch = 0.04;
+      const tcPitch = 0.08;
       this.oscA.frequency.setTargetAtTime(f, t, tcPitch);
-      this.oscB.frequency.setTargetAtTime(f * 1.004, t, tcPitch);
+      this.oscB.frequency.setTargetAtTime(f * 1.002, t, tcPitch);
       this.oscSub.frequency.setTargetAtTime(f * 0.5, t, tcPitch);
       this.lfo.frequency.setTargetAtTime(f * 0.5, t, tcPitch);
 
-      // Off throttle: more burble (deeper AM), darker, quieter.
-      this.amDepth.gain.setTargetAtTime(0.14 + (1 - thr) * 0.26, t, 0.08);
-      const cutoff = 380 + rpm * 1300 + thr * 1700;
-      this.engineLP.frequency.setTargetAtTime(cutoff, t, 0.06);
-      this.engineLP.Q.setTargetAtTime(0.8 + thr * 1.2, t, 0.1);
+      // Off throttle: slightly deeper, smooth burble; darker and quieter.
+      this.amDepth.gain.setTargetAtTime(0.05 + (1 - thr) * 0.09, t, 0.2);
+      const cutoff = 320 + rpm * 520 + thr * 420; // ceiling ≈ 1260 Hz
+      this.engineLP.frequency.setTargetAtTime(cutoff, t, 0.15);
 
-      const engLevel = active ? 0.16 + rpm * 0.12 + thr * 0.22 : 0;
-      this.engineGain.gain.setTargetAtTime(engLevel, t, active ? 0.06 : 0.25);
+      const engLevel = active ? 0.13 + rpm * 0.06 + thr * 0.1 : 0;
+      this.engineGain.gain.setTargetAtTime(engLevel, t, active ? 0.12 : 0.3);
 
-      // --- Gravel ---
+      // --- Gravel bed ---
       const sp = Math.min(speed / 40, 1);
       let gravel = 0;
-      if (active && grounded) gravel = Math.pow(sp, 0.8) * (0.22 + off * 0.3);
-      this.gravelGain.gain.setTargetAtTime(gravel, t, grounded ? 0.08 : 0.05);
-      this.gravelBP.frequency.setTargetAtTime(420 + sp * 600 + off * 900, t, 0.1);
-      this.gravelLP.frequency.setTargetAtTime(1400 + off * 2400, t, 0.1);
+      if (active && grounded) gravel = Math.pow(sp, 0.9) * (0.16 + off * 0.16);
+      this.gravelGain.gain.setTargetAtTime(gravel, t, 0.18);
+      this.gravelBP.frequency.setTargetAtTime(260 + sp * 260 + off * 380, t, 0.2);
+      this.gravelLP.frequency.setTargetAtTime(900 + off * 700, t, 0.2);
 
       // --- Slide scrub ---
       const sl = clamp((slip - 2) / 8, 0, 1);
       let slide = 0;
-      if (active && grounded) slide = sl * sl * (3 - 2 * sl) * (0.26 + off * 0.08) * Math.min(1, speed / 6 + 0.2);
-      this.slideGain.gain.setTargetAtTime(slide, t, 0.07);
-      this.slideBP.frequency.setTargetAtTime(1300 + sl * 900 - off * 300, t, 0.12);
+      if (active && grounded) {
+        slide = sl * sl * (3 - 2 * sl) * (0.14 + off * 0.04) * Math.min(1, speed / 6 + 0.2);
+      }
+      this.slideGain.gain.setTargetAtTime(slide, t, 0.15);
+      this.slideBP.frequency.setTargetAtTime(700 + sl * 400 - off * 150, t, 0.2);
     } catch (e) {
       /* never break the game loop */
     }
   }
 
   impact(strength) {
-    if (!this.ctx || !this.master) return;
+    if (!this._built || !this.out) return;
     try {
       const ctx = this.ctx;
       const t = ctx.currentTime;
       const st = clamp(strength, 0, 25);
       if (st < 0.5) return;
-      // Rate-limit: don't stack many hits within a few frames unless stronger.
-      if (t - this._lastImpactTime < 0.08 && st <= this._lastImpactStrength) return;
+      if (t - this._lastImpactTime < 0.1 && st <= this._lastImpactStrength) return;
       this._lastImpactTime = t;
       this._lastImpactStrength = st;
       const k = Math.min(st / 20, 1);
-      const amp = 0.25 + k * 0.75;
+      const amp = 0.25 + k * 0.6;
 
-      // Low thud
+      // Dull low thud
       const o = ctx.createOscillator();
       o.type = 'sine';
-      o.frequency.setValueAtTime(95 + k * 30, t);
-      o.frequency.setTargetAtTime(42, t, 0.06);
+      o.frequency.setValueAtTime(72 + k * 18, t);
+      o.frequency.setTargetAtTime(38, t, 0.08);
       const og = ctx.createGain();
       og.gain.setValueAtTime(0, t);
-      og.gain.linearRampToValueAtTime(0.9 * amp, t + 0.006);
-      og.gain.setTargetAtTime(0, t + 0.01, 0.07 + k * 0.08);
+      og.gain.linearRampToValueAtTime(0.8 * amp, t + 0.012);
+      og.gain.setTargetAtTime(0, t + 0.02, 0.08 + k * 0.08);
       o.connect(og);
-      og.connect(this.master);
+      og.connect(this.out);
       o.start(t);
-      o.stop(t + 0.8);
+      o.stop(t + 1.0);
 
-      // Noise crunch
+      // Small muffled crunch
       const n = ctx.createBufferSource();
-      n.buffer = this.noiseBuf;
+      n.buffer = shared.noiseBuf;
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass';
-      lp.frequency.setValueAtTime(900 + k * 2600, t);
-      lp.frequency.setTargetAtTime(300, t, 0.1);
+      lp.frequency.setValueAtTime(450 + k * 900, t);
+      lp.frequency.setTargetAtTime(200, t, 0.08);
+      lp.Q.value = 0.5;
       const ng = ctx.createGain();
       ng.gain.setValueAtTime(0, t);
-      ng.gain.linearRampToValueAtTime(0.55 * amp, t + 0.004);
-      ng.gain.setTargetAtTime(0, t + 0.01, 0.05 + k * 0.07);
+      ng.gain.linearRampToValueAtTime(0.28 * amp, t + 0.01);
+      ng.gain.setTargetAtTime(0, t + 0.02, 0.05 + k * 0.05);
       n.connect(lp);
       lp.connect(ng);
-      ng.connect(this.master);
+      ng.connect(this.out);
       n.start(t, Math.random() * 1.5);
-      n.stop(t + 0.8);
+      n.stop(t + 1.0);
     } catch (e) {
       /* ignore */
     }
   }
 
   beep(freq = 440, dur = 0.12) {
-    if (!this.ctx || !this.master) return;
+    if (!this._built || !this.out) return;
     try {
       const ctx = this.ctx;
       const t = ctx.currentTime;
       const f = clamp(freq, 40, 8000);
-      const d = clamp(dur, 0.02, 3);
+      const d = clamp(dur, 0.03, 3);
       const o = ctx.createOscillator();
-      o.type = 'triangle';
+      o.type = 'sine';
       o.frequency.setValueAtTime(f, t);
       const g = ctx.createGain();
+      const rel = Math.max(0.015, d - 0.04);
       g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.5, t + 0.008);
-      g.gain.setValueAtTime(0.5, t + Math.max(0.01, d - 0.03));
-      g.gain.setTargetAtTime(0, t + Math.max(0.01, d - 0.03), 0.02);
+      g.gain.linearRampToValueAtTime(0.22, t + 0.015);
+      g.gain.setValueAtTime(0.22, t + rel);
+      g.gain.setTargetAtTime(0, t + rel, 0.035);
       o.connect(g);
-      g.connect(this.master);
+      g.connect(this.out);
       o.start(t);
-      o.stop(t + d + 0.2);
+      o.stop(t + d + 0.3);
     } catch (e) {
       /* ignore */
     }

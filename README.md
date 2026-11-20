@@ -20,6 +20,23 @@ nothing is loaded from the network.
 | Mute | `M` | | |
 | Pause | `Esc` | Start | ‖ button |
 | Menu: choose stage / start | `←` `→` / `Enter` | d-pad / A | tap |
+| Menu: Solo / Duel | `1` / `2` | | tap |
+
+### Duel (2 players, split screen)
+
+Pick **Duel** in the menu. Both cars start side by side on the same stage. Each player has
+their own timer, splits and camera. When both have finished, the results show the winner,
+the gap and a split-by-split comparison. Duel times are not saved as solo records.
+
+| Action | Player 1 | Player 2 |
+| --- | --- | --- |
+| Drive | `W` `A` `S` `D` | `↑` `←` `↓` `→` |
+| Handbrake | `Left Shift` (or `Space`) | `Right Shift` or `Enter` |
+| Reset onto road | `R` | `/` (or `Backspace`) |
+| Camera | `C` | `.` |
+| Gamepad | first pad | second pad |
+
+Duel needs a keyboard or two gamepads, so it is turned off on touch-only devices.
 
 ## Run locally
 
@@ -33,7 +50,8 @@ npx http-server -p 8080 -c-1     # or: python3 -m http.server 8080
 Then open <http://localhost:8080/>.
 
 Handy URL parameters: `?stage=1` preselects a stage (0-based index, or an id such as
-`?stage=mesa`), `?start=1` skips the menu, `?auto=1` lets the autopilot drive the race.
+`?stage=mesa`), `?mode=duel` preselects split-screen duel, `?start=1` skips the menu, and `?auto=1` lets
+the autopilot drive the race (both cars in a duel).
 
 ## Publish on GitHub Pages
 
