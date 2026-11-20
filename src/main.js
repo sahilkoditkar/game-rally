@@ -10,8 +10,9 @@ import { store, getBest, setBest } from './storage.js';
 import { REGIONS, menuIds, getDef, regionOf, nextId, isDaily, dailyDef, conditions } from './catalog.js';
 import { Dust, Rain } from './fx.js';
 import { Player, CAMS, paintKey, updateCamera, aimSun } from './player.js';
-import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults } from './hud.js';
-import { renderMenu, renderMute } from './menu.js';
+import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults, renderRallyStage, renderRallyResults } from './hud.js';
+import { renderMenu, renderMute, getViewRegion } from './menu.js';
+import { medalTimes, medalFor, medalRank, medalUp, rallyStages, rallyPar, parOf, trophyFor, getRallyBest, setRallyBest, medalSummary } from './progress.js';
 import { keys, HOLD, readInput, pollPads, connectedPads, bindKeyboard, bindTouch } from './input.js';
 
 const FIXED = 1 / 120;
@@ -77,6 +78,8 @@ let mode = 'solo';
 let sel = null; // selected stage id (menu order includes today's daily stage)
 let cdT = 0, cdShown = null, finishT = 0, lastRun = null, hintsT = 0;
 let cond = { night: false, rain: false, sun: 1, ambient: 1 };
+// championship: { region, ids, idx, phase: 'stage' | 'inter' | 'final', totals: [p0, p1], times: [[], []], medals: [[], []], newMedals: [[], []] }
+let rally = null;
 
 // split-screen needs two sets of controls: a keyboard, or two gamepads
 const duelAvailable = () => !isTouch || hasFinePointer || connectedPads().length >= 2;
@@ -138,8 +141,12 @@ function setScreen() {
   $('menu').classList.toggle('hidden', state !== 'menu');
   $('hud').classList.toggle('hidden', !racing);
   $('pause').classList.toggle('hidden', !paused);
-  $('finish').classList.toggle('hidden', !(showResults && !duel));
-  $('duelFinish').classList.toggle('hidden', !(showResults && duel));
+  $('finish').classList.toggle('hidden', !(showResults && !duel && !rally));
+  $('duelFinish').classList.toggle('hidden', !(showResults && duel && !rally));
+  $('rally').classList.toggle('hidden', !(showResults && rally));
+  // in a rally, pausing offers Resume / Abandon rally only
+  $('restartBtn').classList.toggle('hidden', !!rally);
+  $('pMenuBtn').textContent = rally ? 'Abandon rally' : 'Menu';
   $('touch').classList.toggle('hidden', !(isTouch && !duel && (state === 'countdown' || state === 'race') && !paused));
   players[1].car.group.visible = duel && racing;
   for (const p of players) {
@@ -180,6 +187,7 @@ function showMenu(scroll = false) {
   renderMenu({
     sel, mode, duelAvailable: duelAvailable(), players, muted, scroll,
     onSelect: (id) => select(id), onStart: (id) => { select(id); startStage(id); },
+    onRally: (regionId) => startRally(regionId),
     onMode: (m) => setMode(m),
     onPaint: (i, idx) => { players[i].setPaint(idx); store.set(paintKey(i), idx); showMenu(); },
   });
@@ -202,7 +210,7 @@ function startStage(key) {
       p.resetRun();
       p.place(stage, stage.startIdx, racers.length === 2 ? (k === 0 ? 1.6 : -1.6) : 0); // P1 on the left, P2 on the right
     });
-    preparePanes(racers, stage, cond);
+    preparePanes(racers, stage, cond, { targets: racers.length === 1 ? medalTimes(def) : null });
     dust.clear();
     state = 'countdown'; paused = false;
     cdT = -0.5; cdShown = null; finishT = 0; hintsT = 0;
@@ -213,6 +221,7 @@ function startStage(key) {
 
 function toMenu() {
   paused = false;
+  rally = null;
   state = 'menu';
   racers = [players[0]];
   $('countdown').textContent = '';
@@ -278,15 +287,64 @@ function playerFinish(p) {
   if (racers.length === 1) {
     const id = stage.def.id, prev = getBest(id), t = p.time, s = p.splits.slice(0, 2);
     const isBest = !prev || t < prev.t;
-    if (isBest) setBest(id, { t, s }); // solo only; the daily stage is keyed by its dated id
-    lastRun = { t, s, prev, isBest };
+    if (isBest) setBest(id, { t, s }); // solo only (rally stages count too); the daily stage is keyed by its dated id
+    // medals are derived from the best time, so an upgrade is "this run's medal beats the old best's medal"
+    const prevMedal = prev ? medalFor(stage.def, prev.t) : null, medal = medalFor(stage.def, t);
+    const newMedal = medalRank(medal) > medalRank(prevMedal);
+    lastRun = { t, s, prev, isBest, medal, newMedal, up: medalUp(stage.def, t, medal) };
     renderFinish(stage.def, lastRun, nextName);
   } else paneFinished(racers);
   if (racers.every((q) => q.done)) {
     state = 'finish'; finishT = 0;
-    if (racers.length === 2) renderDuelResults(stage.def, racers, nextName);
+    if (rally) rallyStageDone();
+    else if (racers.length === 2) renderDuelResults(stage.def, racers, nextName);
   }
   setScreen();
+}
+
+// ---------------------------------------------------------------- rally (championship): a region's stages back to back
+function startRally(regionId) {
+  const ids = rallyStages(regionId);
+  if (!ids.length) return;
+  rally = { region: regionId, ids, idx: 0, phase: 'stage', totals: [0, 0], base: [0, 0], times: [[], []], medals: [[], []], newMedals: [[], []] };
+  startStage(ids[0]);
+}
+
+function rallyStageDone() {
+  const k = rally.idx, solo = racers.length === 1;
+  racers.forEach((p, i) => {
+    rally.times[i][k] = p.time; rally.totals[i] += p.time;
+    rally.medals[i][k] = solo ? lastRun.medal : null;
+    rally.newMedals[i][k] = solo ? lastRun.newMedal : false;
+  });
+  const region = REGIONS.find((r) => r.id === rally.region), names = rally.ids.map((id) => getDef(id).name);
+  const parTotal = rallyPar(rally.region);
+  if (k < rally.ids.length - 1) {
+    rally.phase = 'inter';
+    const parSoFar = parTotal == null ? null : rally.ids.slice(0, k + 1).reduce((s, id) => s + parOf(getDef(id)), 0);
+    renderRallyStage({
+      regionName: region.name, n: k + 1, of: rally.ids.length, stageName: names[k], nextName: names[k + 1], parTotal: parSoFar,
+      racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, time: rally.times[i][k], total: rally.totals[i], medal: rally.medals[i][k], newMedal: rally.newMedals[i][k], up: solo ? lastRun.up : null })),
+    });
+  } else {
+    rally.phase = 'final';
+    let prev = null, isBest = false, trophy = null;
+    if (solo) {
+      prev = getRallyBest(rally.region); trophy = trophyFor(rally.region, rally.totals[0]);
+      isBest = !prev || rally.totals[0] < prev.t;
+      if (isBest) setRallyBest(rally.region, { t: rally.totals[0], stages: rally.times[0].slice() }); // solo only
+    }
+    renderRallyResults({
+      regionName: region.name, ids: rally.ids, names, parTotal, trophy, prev, isBest,
+      racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, times: rally.times[i], total: rally.totals[i], medals: rally.medals[i] })),
+    });
+  }
+}
+
+function rallyContinue() {
+  if (!rally || rally.phase !== 'inter') return;
+  rally.idx++; rally.phase = 'stage'; rally.base = rally.totals.slice();
+  startStage(rally.ids[rally.idx]);
 }
 
 // ---------------------------------------------------------------- actions & input
@@ -308,11 +366,16 @@ function onAction(a, who = 0) {
     else if (a === 'down') stepRegion(1);
     else if (a === 'confirm') startStage(sel);
     else if (a === 'solo' || a === 'duel') setMode(a);
+    else if (a === 'rally') startRally(getViewRegion() || regionOf(sel));
   } else if (paused) {
     if (a === 'pause') setPaused(false);
   } else if (state === 'countdown' || state === 'race') {
     if (a === 'pause') setPaused(true);
     else if (a === 'reset' && state === 'race' && racers[who] && !racers[who].done) resetPlayer(racers[who]);
+  } else if (state === 'finish' && rally) {
+    // no retries inside a rally: Enter continues (or leaves after the final results), R restarts a finished rally
+    if (a === 'confirm') { if (rally.phase === 'inter') rallyContinue(); else if (rally.phase === 'final') toMenu(); }
+    else if ((a === 'retry' || (a === 'reset' && who === 0)) && rally.phase === 'final') startRally(rally.region);
   } else if (state === 'finish') {
     if (a === 'retry' || (a === 'reset' && who === 0)) startStage(stage.def.id);
     else if (a === 'next') { const n = nextId(stage.def.id); sel = n; store.set('dustline.stage', n); startStage(n); }
@@ -323,7 +386,7 @@ function onAction(a, who = 0) {
 const KEYMAP = { KeyM: 'mute', KeyC: 'camera', Escape: 'pause', KeyP: 'pause', KeyR: 'reset', KeyN: 'next', Enter: 'confirm', NumpadEnter: 'confirm' };
 const MENUKEYS = {
   ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
-  ArrowUp: 'up', KeyQ: 'up', ArrowDown: 'down', KeyE: 'down', Space: 'confirm', Digit1: 'solo', Digit2: 'duel',
+  ArrowUp: 'up', KeyQ: 'up', ArrowDown: 'down', KeyE: 'down', Space: 'confirm', Digit1: 'solo', Digit2: 'duel', KeyT: 'rally',
 };
 bindKeyboard((e) => {
   let a = KEYMAP[e.code], who = 0;
@@ -361,6 +424,12 @@ $('fMenuBtn').addEventListener('click', toMenu);
 $('dfRematch').addEventListener('click', () => onAction('retry'));
 $('dfNext').addEventListener('click', () => onAction('next'));
 $('dfMenu').addEventListener('click', toMenu);
+$('rally').addEventListener('click', (e) => {
+  const act = e.target.closest && e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
+  if (act === 'continue') rallyContinue();
+  else if (act === 'abandon' || act === 'menu') toMenu();
+  else if (act === 'again' && rally) startRally(rally.region);
+});
 for (const b of document.querySelectorAll('.seg-btn')) b.addEventListener('click', () => onAction(b.dataset.mode));
 
 // ---------------------------------------------------------------- simulation
@@ -453,7 +522,11 @@ function frame(now) {
     if (state === 'countdown') updateCountdown(dt);
     acc += dt;
     while (acc >= FIXED) { stepPhysics(FIXED); acc -= FIXED; }
-    if (state === 'finish') { const was = finishT; finishT += dt; if (was <= 1.1 && finishT > 1.1) setScreen(); }
+    if (state === 'finish') {
+      const was = finishT; finishT += dt;
+      if (was <= 1.1 && finishT > 1.1) setScreen();
+      if (auto && rally && rally.phase === 'inter' && was <= 2.6 && finishT > 2.6) rallyContinue(); // hands-free test runs
+    }
     for (const p of racers) {
       if (p.done) p.doneT += dt;
       watchdog(p, dt);
@@ -473,7 +546,7 @@ function frame(now) {
     updateCamera(p, dt, stage, state === 'menu' ? 'menu' : p.done && p.doneT > 1.1 ? 'finish' : null);
   });
   if (state !== 'menu' && state !== 'boot') {
-    updatePanes(racers, stage, state);
+    updatePanes(racers, stage, state, rally ? { n: rally.idx + 1, of: rally.ids.length, totals: rally.base } : null); // base = totals before this stage, so the HUD never double counts
     if (state === 'race' && !paused) hintsT += dt;
     $('hints').classList.toggle('show', state === 'race' && racers.length === 1 && hintsT < 6);
   }
@@ -498,7 +571,10 @@ window.__game = {
   get stages() { return menuIds(); },
   get conditions() { return { ...cond }; },
   get info() { return { ...renderer.info.memory, builtStages: [...built.keys()] }; },
-  startStage,
+  startStage(key) { rally = null; startStage(key); },
+  startRally: (regionId) => startRally(regionId),
+  get rally() { return rally ? { region: rally.region, stages: rally.ids.slice(), stage: rally.idx + 1, of: rally.ids.length, phase: rally.phase, totals: rally.totals.slice(0, racers.length), times: rally.times.slice(0, racers.length).map((a) => a.slice()) } : null; },
+  medals: () => medalSummary(),
   selectStage(key) { const d = getDef(key); if (!d) return false; if (state === 'menu') select(d.id); else sel = d.id; return d.id; },
   setMode,
   get time() { return players[0].time; },
@@ -514,7 +590,9 @@ function boot() {
   mode = (params.get('mode') || store.get('dustline.mode', 'solo')) === 'duel' && duelAvailable() ? 'duel' : 'solo';
   loadStage(getDef(sel));
   players[0].place(stage, stage.startIdx);
-  if (params.get('start') === '1') startStage(sel);
+  const pr = params.get('rally');
+  if (pr && params.get('start') === '1' && rallyStages(pr).length) startRally(pr);
+  else if (params.get('start') === '1') startStage(sel);
   else toMenu();
   $('loading').classList.add('fade');
   requestAnimationFrame(frame);
