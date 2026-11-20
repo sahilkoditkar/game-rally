@@ -17,8 +17,10 @@ export const PAINTS = [
 ];
 
 // tuning
-const POWER = 11, VMAX = 52, BRAKE = 17, REV_ACC = 6, REV_MAX = 9, HAND_DEC = 5;
+const POWER = 13, VMAX = 52, BRAKE = 17, REV_ACC = 6, REV_MAX = 9, HAND_DEC = 4;
 const GRIP = 10.5, GRAV = 20, WB = 2.5;
+const FIXED_DT = 1 / 120;
+const MAX_ROLL = 0.105, MAX_PITCH = 0.07; // cosmetic body lean limits (~6 deg, ~4 deg)
 const WHEEL_R = 0.36, WX = 0.82, WZ = 1.25;
 const GEAR_TOP = [0, 11, 19, 27, 36, 46];
 const BODY_PIVOT = 0.45;
@@ -169,8 +171,6 @@ function buildWheel(side) {
   return g;
 }
 
-const _v = new THREE.Vector3();
-
 export class Car {
   constructor() {
     this.group = new THREE.Group();
@@ -212,8 +212,16 @@ export class Car {
     this.idx = 0; this.roadDist = 0; this.offroad = 0; this.grounded = true;
     this.impact = 0; this.rpm = 0.25; this.gear = 1; this.throttle = 0;
     this.time = 0;
-    this.aLat = 0; this.aLong = 0;
+    this.aLat = 0; this.aLong = 0;   // low-passed accelerations (m/s^2), lateral +left
+    this.drift = 0;                  // 0..1 player-initiated slide state
+    this.driftAngle = 0;             // signed angle velocity vs heading (rad)
+    // interpolated render pose (what the group shows; use for cameras for jitter-free motion)
+    this.rx = 0; this.ry = 0; this.rz = 0; this.ryaw = 0;
     this._stage = null;
+    this._sIn = 0;                   // smoothed normalised steering -1..1
+    this._thrAvg = 0;
+    this._prev = { x: 0, y: 0, z: 0, yaw: 0 };
+    this._vt = 0; this._lastDt = FIXED_DT;
     this._pitch = 0; this._roll = 0;
     this._bRoll = 0; this._bRollV = 0; this._bPitch = 0; this._bPitchV = 0; this._bob = 0; this._bobV = 0;
     this._wheelH = [0, 0, 0, 0];
@@ -229,20 +237,26 @@ export class Car {
     this.yaw = Math.atan2(stage.tx[idx], stage.tz[idx]);
     this.y = stage.height(this.x, this.z);
     this.vx = this.vz = this.vy = 0; this.yawRate = 0;
-    this.speed = this.vf = this.slip = 0; this.steer = 0;
+    this.speed = this.vf = this.slip = 0; this.steer = 0; this._sIn = 0;
     this.idx = idx; this.roadDist = 0; this.offroad = 0; this.grounded = true;
-    this.impact = 0; this.rpm = 0.25; this.gear = 1; this.throttle = 0;
-    this.aLat = this.aLong = 0;
+    this.impact = 0; this.rpm = 0.25; this.gear = 1; this.throttle = 0; this._thrAvg = 0;
+    this.aLat = this.aLong = 0; this.drift = 0; this.driftAngle = 0;
     this._bRoll = this._bRollV = this._bPitch = this._bPitchV = this._bob = this._bobV = 0;
-    this._poseFromGround(true);
+    this._prev.x = this.x; this._prev.y = this.y; this._prev.z = this.z; this._prev.yaw = this.yaw;
+    this._vt = this.time;
+    this._poseFromGround(this.x, this.z, this.yaw, true);
+    this._writePose(1);
   }
 
   step(dt, input, stage) {
     this._stage = stage;
-    this.time += dt;
+    const P = this._prev; P.x = this.x; P.y = this.y; P.z = this.z; P.yaw = this.yaw;
+    this.time += dt; this._lastDt = dt;
     const thr = clamp(input.throttle || 0, 0, 1), brk = clamp(input.brake || 0, 0, 1);
     const hand = !!input.hand, sIn = clamp(input.steer || 0, -1, 1);
+    const prevThr = this._thrAvg;
     this.throttle = thr;
+    this._thrAvg += (thr - this._thrAvg) * Math.min(1, 4 * dt);
 
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const fx = sy, fz = cy, lx = cy, lz = -sy;
@@ -258,19 +272,26 @@ export class Car {
     const h = stage.height(this.x, this.z);
     const hF = stage.height(this.x + fx * 1.5, this.z + fz * 1.5);
     const hB = stage.height(this.x - fx * 1.5, this.z - fz * 1.5);
-    const slope = (hF - hB) / 3;
+    const slope = clamp((hF - hB) / 3, -0.6, 0.6);
     const vSurf = vf * slope;
     const contact = this.grounded || this.y - h < 0.15;
 
-    // steering
+    // steering: normalised input ramps in smoothly (slower at speed), returns to centre quickly
+    const sp01 = Math.min(1, speed / 40);
+    const s0 = this._sIn;
+    const into = sIn !== 0 && Math.sign(sIn) === Math.sign(s0 || sIn) && Math.abs(sIn) >= Math.abs(s0);
+    const rate = into ? 5.5 - 2.5 * sp01 : 9;
+    this._sIn += clamp(sIn - s0, -rate * dt, rate * dt);
+    const sN = this._sIn;
     const maxSteer = 0.55 - 0.40 * Math.min(1, speed / 42);
-    this.steer += (sIn * maxSteer - this.steer) * Math.min(1, 7 * dt);
+    this.steer = sN * maxSteer;
 
     const grip = stage.def.grip;
-    const maxLatNH = GRIP * grip * (1 - 0.25 * off);
+    const baseLat = GRIP * grip * (1 - 0.25 * off);
     let aLong = 0, aLat = 0;
+    let beta = Math.atan2(vl, Math.abs(vf) + 1.5);
     if (contact) {
-      // longitudinal
+      // ---- longitudinal ----
       let drive = 0, decel = 0;
       if (vf > -1) drive += thr * POWER * Math.max(0, 1 - vf / VMAX);
       else drive += thr * 14;
@@ -279,58 +300,70 @@ export class Car {
         else if (vf > -REV_MAX) drive -= brk * REV_ACC * Math.min(1, (vf + REV_MAX) / 2);
       }
       if (hand) decel += HAND_DEC;
-      decel += 0.25 + Math.abs(vf) * (0.03 + 0.33 * off);
+      if (thr < 0.05 && vf > 2) decel += 1.1 + 0.025 * vf; // engine braking
+      decel += 0.25 + Math.abs(vf) * (0.03 + 0.17 * off) + off * 1.2;
       drive -= 9.81 * slope * 0.7;
       const v0 = vf;
       vf += drive * dt;
-      const s = Math.sign(vf), m = Math.abs(vf) - decel * dt;
-      // only let decel bring vf to zero (don't flip direction), unless drive pushes through
-      vf = m > 0 ? s * m : 0;
-      aLong = (vf - v0) / dt;
+      const sg = Math.sign(vf), m = Math.abs(vf) - decel * dt;
+      vf = m > 0 ? sg * m : 0;
+      const longUse = Math.abs(vf - v0) / dt;
 
-      // lateral grip
-      const maxLat = maxLatNH * (hand ? 0.4 : 1) * (thr > 0.5 && Math.abs(vl) > 1.5 ? 0.85 : 1);
+      // ---- drift state: only the player's actions start a slide ----
+      const fast = clamp((speed - 9) / 6, 0, 1);
+      const turning = Math.abs(sN) > 0.4;
+      let d = this.drift;
+      if (prevThr > 0.6 && thr < 0.2 && turning) d = Math.max(d, 0.55 * fast);       // lift-off oversteer
+      if (brk > 0.3 && vf > 1 && turning) d += (0.5 * brk * fast - d) * Math.min(1, 3 * dt) * (d < 0.5 * brk * fast ? 1 : 0); // trail-brake rotation
+      if (hand && speed > 4) d += (1 - d) * Math.min(1, 6 * dt);                        // handbrake
+      if (thr > 0.8 && turning && speed > 7) d += thr * (1.1 - grip) * (this.gear <= 2 ? 1.4 : 0.7) * dt; // power oversteer on loose surfaces
+      const holding = thr > 0.4 && Math.abs(beta) > 0.1 && turning && Math.sign(sN) === Math.sign(this.yawRate);
+      if (holding && !hand) d = Math.max(d, Math.min(this.drift, 0.6)) - 0.08 * dt;
+      else if (!hand) d *= Math.exp(-(sN === 0 ? 2.8 : 1.6) * dt);
+      this.drift = d = clamp(d, 0, 1);
+
+      // ---- lateral grip with traction circle ----
+      const use = Math.min(1, longUse / (13 * grip));
+      let maxLat = baseLat * (1 - 0.3 * use * use) * (1 - 0.2 * d);
+      if (hand) maxLat *= 0.45;
+      if (thr > 0.5 && Math.abs(vl) > 1.5) maxLat *= 0.9;
       aLat = clamp(-vl * 14, -maxLat, maxLat);
       vl += aLat * dt;
 
-      // yaw
-      let w = vf * Math.tan(this.steer) / WB * (hand ? 1.35 : 1);
-      const lim = 1.8 * maxLatNH / Math.max(Math.abs(vf), 4);
-      w = clamp(w, -lim, lim);
-      const beta = Math.atan2(vl, Math.abs(vf) + 2);
-      const target = w + beta * 1.5 * Math.min(1, speed / 3);
-      this.yawRate += (target - this.yawRate) * Math.min(1, 9 * dt);
+      // ---- yaw: proportional to steering, speed-limited near the grip limit ----
+      const av = Math.max(Math.abs(vf), 4);
+      const wKin = Math.abs(vf) * Math.tan(maxSteer) / WB;
+      const wGrip = baseLat / av * (1.06 + 0.95 * d + (hand ? 0.6 : 0));
+      const wMax = Math.min(wKin * (hand ? 1.35 : 1), wGrip);
+      let target = sN * wMax * Math.sign(vf || 1);
+      // self-aligning toward the velocity; weaker while the slide is held on throttle,
+      // stronger (counter-steer assist) when the player isn't steering into the slide
+      const intoSlide = sN !== 0 && Math.sign(sN) === -Math.sign(beta);
+      let align = 1.6 - 0.7 * d * thr;
+      if (!intoSlide) align += 1.2;
+      target += beta * align * Math.min(1, speed / 3);
+      // anti-spin: hard limit on slide angle
+      const bLim = hand ? 1.2 : 0.75;
+      if (Math.abs(beta) > bLim) target += Math.sign(beta) * (Math.abs(beta) - bLim) * 6;
+      this.yawRate += (target - this.yawRate) * Math.min(1, 10 * dt);
+      aLong = (vf - v0) / dt;
     } else {
       this.yawRate *= 1 - 0.4 * dt;
+      this.drift *= Math.exp(-1 * dt);
     }
-    this.aLong = aLong; this.aLat = aLat;
+    this.aLong += (aLong - this.aLong) * Math.min(1, 6 * dt);
+    this.aLat += (aLat - this.aLat) * Math.min(1, 6 * dt);
 
     // recompose with pre-yaw axes
     this.vx = fx * vf + lx * vl;
     this.vz = fz * vf + lz * vl;
     this.yaw += this.yawRate * dt;
-    if (this.yaw > Math.PI) this.yaw -= Math.PI * 2; else if (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
+    if (this.yaw > Math.PI) { this.yaw -= Math.PI * 2; P.yaw -= Math.PI * 2; }
+    else if (this.yaw < -Math.PI) { this.yaw += Math.PI * 2; P.yaw += Math.PI * 2; }
     this.x += this.vx * dt;
     this.z += this.vz * dt;
 
-    // obstacles
-    stage.collide(this.x, this.z, 1.1, (o, dx, dz, rr) => {
-      const d = Math.hypot(dx, dz) || 1e-3, nx = dx / d, nz = dz / d;
-      const pen = rr - d;
-      this.x += nx * pen; this.z += nz * pen;
-      const vn = this.vx * nx + this.vz * nz;
-      if (vn < 0) {
-        const before = Math.hypot(this.vx, this.vz);
-        this.vx -= 1.3 * vn * nx; this.vz -= 1.3 * vn * nz;
-        const scrub = 1 - 0.4 * Math.min(1, -vn / 4);
-        this.vx *= scrub; this.vz *= scrub;
-        const lost = before - Math.hypot(this.vx, this.vz);
-        // a little spin from glancing blows
-        const cross = fx * nz - fz * nx;
-        this.yawRate += clamp(cross * -vn * 0.15, -1.5, 1.5);
-        if (lost > 0.5) this.impact = Math.max(this.impact, lost);
-      }
-    });
+    this._collide(stage);
 
     // vertical
     const h2 = stage.height(this.x, this.z);
@@ -359,7 +392,6 @@ export class Car {
       }
     }
 
-    // guard
     if (!Number.isFinite(this.x + this.z + this.y + this.vx + this.vz + this.vy + this.yaw + this.yawRate)) {
       this.reset(stage, this.idx);
       return;
@@ -369,7 +401,9 @@ export class Car {
     this.speed = Math.hypot(this.vx, this.vz);
     const f2x = Math.sin(this.yaw), f2z = Math.cos(this.yaw);
     this.vf = this.vx * f2x + this.vz * f2z;
-    this.slip = Math.abs(this.vx * f2z - this.vz * f2x);
+    const vl2 = this.vx * f2z - this.vz * f2x;
+    this.slip = Math.abs(vl2);
+    this.driftAngle = this.speed > 2 ? Math.atan2(vl2, Math.abs(this.vf)) : 0;
 
     // fake gearbox
     const v = Math.abs(this.vf);
@@ -390,53 +424,114 @@ export class Car {
     this.rpm += (rpmT - this.rpm) * Math.min(1, 14 * dt);
   }
 
-  _poseFromGround(snap) {
-    const st = this._stage; if (!st) return;
-    const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
+  // two circles (front / rear axle) against the stage's round obstacles
+  _collide(stage) {
+    for (let k = 0; k < 2; k++) {
+      const arm = k === 0 ? 1.15 : -1.15;
+      const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+      const cx = this.x + fx * arm, cz = this.z + fz * arm;
+      stage.collide(cx, cz, 0.95, (o, dx, dz, rr) => {
+        const d = Math.hypot(dx, dz) || 1e-3, nx = dx / d, nz = dz / d;
+        const pen = rr - d;
+        this.x += nx * pen; this.z += nz * pen;
+        // velocity of the contact point (includes rotation)
+        const pvx = this.vx + this.yawRate * fz * arm, pvz = this.vz - this.yawRate * fx * arm;
+        const vn = pvx * nx + pvz * nz;
+        if (vn >= 0) return;
+        const before = Math.hypot(this.vx, this.vz);
+        const head = clamp(-vn / Math.max(before, 1), 0, 1); // 1 = head-on, 0 = grazing
+        // remove the normal component with a small bounce
+        const jn = -(1 + 0.25) * vn;
+        this.vx += jn * nx; this.vz += jn * nz;
+        // scrub the tangential part: little when grazing, a lot head-on
+        const tvn = this.vx * nx + this.vz * nz;
+        const tx = this.vx - tvn * nx, tz = this.vz - tvn * nz;
+        const keep = 1 - 0.85 * head * head - 0.06;
+        this.vx = tvn * nx + tx * keep; this.vz = tvn * nz + tz * keep;
+        // yaw from the off-centre hit, bounded
+        const cross = (fx * arm) * nz - (fz * arm) * nx; // r x n (y component sign)
+        this.yawRate = clamp(this.yawRate - cross * jn * 0.12, -2.5, 2.5);
+        this.drift *= 0.5;
+        const lost = before - Math.hypot(this.vx, this.vz);
+        if (lost > 0.5) this.impact = Math.max(this.impact, lost);
+      });
+    }
+  }
+
+  _poseFromGround(x, z, yaw, snap) {
+    const st = this._stage; if (!st) return null;
+    const sy = Math.sin(yaw), cy = Math.cos(yaw);
     for (let i = 0; i < 4; i++) {
       const [ax, az] = this.wheelLocal[i];
-      this._wheelH[i] = st.height(this.x + cy * ax + sy * az, this.z - sy * ax + cy * az);
+      this._wheelH[i] = st.height(x + cy * ax + sy * az, z - sy * ax + cy * az);
     }
     const [hFL, hFR, hRL, hRR] = this._wheelH;
-    const pitch = Math.atan2((hRL + hRR) - (hFL + hFR), 2 * 2 * WZ);
-    const roll = Math.atan2((hFL + hRL) - (hFR + hRR), 2 * 2 * WX);
+    const pitch = clamp(Math.atan2((hRL + hRR) - (hFL + hFR), 2 * 2 * WZ), -0.4, 0.4);
+    const roll = clamp(Math.atan2((hFL + hRL) - (hFR + hRR), 2 * 2 * WX), -0.4, 0.4);
     if (snap) { this._pitch = pitch; this._roll = roll; }
     return [pitch, roll];
   }
 
+  _writePose(alpha) {
+    const P = this._prev;
+    let dy = this.yaw - P.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    this.rx = P.x + (this.x - P.x) * alpha;
+    this.ry = P.y + (this.y - P.y) * alpha;
+    this.rz = P.z + (this.z - P.z) * alpha;
+    this.ryaw = P.yaw + dy * alpha;
+    this.group.position.set(this.rx, this.ry, this.rz);
+    this.group.rotation.set(this._pitch, this.ryaw, this._roll);
+  }
+
   updateVisual(dt) {
-    dt = Math.min(dt, 0.1);
-    const k = Math.min(1, 12 * dt);
+    dt = clamp(dt || 0, 0, 0.1);
+    // interpolate between the last two physics states (render lags physics by < 1 step)
+    this._vt = clamp(this._vt + dt, this.time - this._lastDt, this.time);
+    const alpha = clamp(1 - (this.time - this._vt) / this._lastDt, 0, 1);
+
+    // integrate the cosmetic springs in small fixed sub-steps so low frame rates stay stable
+    const rT = clamp(this.aLat * 0.009, -MAX_ROLL, MAX_ROLL);
+    const pT = clamp(-this.aLong * 0.005, -MAX_PITCH, MAX_PITCH);
+    if (this._land > 0) { this._bobV -= Math.min(this._land, 12) * 0.2; this._land = 0; }
+    const rough = this.speed * (0.0015 + 0.008 * this.offroad);
+    const subs = Math.max(1, Math.ceil(dt / (1 / 240)));
+    const h = dt / subs;
+    for (let i = 0; i < subs; i++) {
+      this._bRollV += ((rT - this._bRoll) * 110 - this._bRollV * 15) * h;
+      this._bRoll += this._bRollV * h;
+      this._bPitchV += ((pT - this._bPitch) * 110 - this._bPitchV * 15) * h;
+      this._bPitch += this._bPitchV * h;
+      this._bobV += (-this._bob * 220 - this._bobV * 16) * h;
+      this._bob += this._bobV * h;
+    }
+    this._bobV += (Math.random() - 0.5) * rough * Math.min(1, dt * 60);
+    this._bRoll = clamp(this._bRoll, -MAX_ROLL, MAX_ROLL);
+    this._bPitch = clamp(this._bPitch, -MAX_PITCH, MAX_PITCH);
+    this._bob = clamp(this._bob, -0.1, 0.06);
+    if (!Number.isFinite(this._bRoll + this._bRollV + this._bPitch + this._bPitchV + this._bob + this._bobV)) {
+      this._bRoll = this._bRollV = this._bPitch = this._bPitchV = this._bob = this._bobV = 0;
+    }
+
+    // terrain pitch/roll from the four wheel contact heights
+    const P = this._prev;
+    const ix = P.x + (this.x - P.x) * alpha, iz = P.z + (this.z - P.z) * alpha;
+    let dy = this.yaw - P.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    const k = 1 - Math.exp(-14 * dt);
     if (this.grounded) {
-      const pr = this._poseFromGround(false);
+      const pr = this._poseFromGround(ix, iz, P.yaw + dy * alpha, false);
       if (pr) { this._pitch += (pr[0] - this._pitch) * k; this._roll += (pr[1] - this._roll) * k; }
     } else {
-      // in the air the nose slowly drops
-      this._pitch = clamp(this._pitch + 0.25 * dt, -0.5, 0.35);
-      this._roll *= 1 - 1.5 * dt;
+      this._pitch = clamp(this._pitch + 0.2 * dt, -0.4, 0.3);
+      this._roll *= Math.exp(-1.5 * dt);
     }
-    this.group.position.set(this.x, this.y, this.z);
-    this.group.rotation.set(this._pitch, this.yaw, this._roll);
-
-    // cosmetic body motion: damped springs
-    const rT = clamp(this.aLat * 0.011, -0.085, 0.085);
-    const pT = clamp(-this.aLong * 0.006, -0.06, 0.07);
-    const ks = 160, kd = 16;
-    this._bRollV += ((rT - this._bRoll) * ks - this._bRollV * kd) * dt;
-    this._bRoll += this._bRollV * dt;
-    this._bPitchV += ((pT - this._bPitch) * ks - this._bPitchV * kd) * dt;
-    this._bPitch += this._bPitchV * dt;
-    if (this._land > 0) { this._bobV -= Math.min(this._land, 12) * 0.25; this._land = 0; }
-    const rough = this.speed * (0.004 + 0.02 * this.offroad);
-    this._bobV += ((-this._bob) * 220 - this._bobV * 14) * dt + (Math.random() - 0.5) * rough;
-    this._bob = clamp(this._bob + this._bobV * dt, -0.12, 0.08);
+    this._writePose(alpha);
     this.body.rotation.set(this._bPitch, 0, this._bRoll);
     this.body.position.y = BODY_PIVOT + this._bob;
 
     // wheels
     const spin = this.grounded ? this.vf / WHEEL_R : this.throttle * 40;
     for (let i = 0; i < 4; i++) {
-      this.wheels[i].rotation.x += spin * dt;
+      this.wheels[i].rotation.x = (this.wheels[i].rotation.x + spin * dt) % (Math.PI * 2);
       if (i < 2) this.wheelPivots[i].rotation.y = this.steer;
     }
   }
@@ -445,7 +540,7 @@ export class Car {
     const [ax, az] = this.wheelLocal[i];
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const h = this.grounded ? this._wheelH[i] || this.y : this.y;
-    return target.set(this.x + cy * ax + sy * az, this.grounded ? h : this.y, this.z - sy * ax + cy * az);
+    return target.set(this.x + cy * ax + sy * az, h, this.z - sy * ax + cy * az);
   }
 }
 
