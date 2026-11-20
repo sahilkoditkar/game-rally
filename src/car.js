@@ -570,7 +570,13 @@ export function autopilot(car, stage) {
   const ang = Math.atan2(stage.sx[j] - car.x, stage.sz[j] - car.z);
   let diff = ang - car.yaw;
   diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-  _ai.steer = clamp(diff * 2.2, -1, 1);
+  // pure pursuit -> desired yaw rate -> normalised steer for the car's speed-limited steering
+  const L = Math.max(4, Math.hypot(stage.sx[j] - car.x, stage.sz[j] - car.z));
+  const wDes = 2 * Math.sin(diff) / L * Math.max(speed, 3);
+  const av = Math.max(Math.abs(car.vf), 4);
+  const maxSteer = 0.55 - 0.40 * Math.min(1, speed / 42);
+  const wMax = Math.max(0.05, Math.min(Math.abs(car.vf) * Math.tan(maxSteer) / WB, GRIP * stage.def.grip * (1 - 0.25 * car.offroad) / av * 1.06));
+  _ai.steer = clamp(wDes / wMax * 1.25 + diff * 0.5, -1, 1);
 
   // speed plan: allowed speed at each upcoming sample, relaxed by braking distance
   const maxLat = GRIP * stage.def.grip;
