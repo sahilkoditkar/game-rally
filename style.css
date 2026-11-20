@@ -200,7 +200,7 @@ kbd {
 .menu-actions .big { flex: 1; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; font-weight: 700; color: var(--char-2); font-style: italic; }
 .legend-touch { display: none; }
-body.touch .legend-keys { display: none; }
+body.touch .legend-keys, body.touch .btn-key, body.touch .kbd-only { display: none; }
 body.touch .legend-touch { display: flex; }
 
 /* ---------- overlays / panels ---------- */

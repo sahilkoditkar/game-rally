@@ -87,7 +87,7 @@ window.addEventListener('resize', onResize);
 const DUST_N = 160;
 class Dust {
   constructor() {
-    this.mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthWrite: false, flatShading: true });
+    this.mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.34, depthWrite: false, flatShading: true });
     this.mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), this.mat, DUST_N);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
@@ -102,7 +102,8 @@ class Dust {
     this.o = new THREE.Object3D();
     this.clear();
   }
-  setColor(hex) { this.mat.color.set(hex); }
+  // emissive lift keeps puffs reading as airy dust (not rocks) on their shadow side
+  setColor(hex) { this.mat.color.set(hex); this.mat.emissive.set(hex).multiplyScalar(0.62); }
   clear() { this.age.fill(2); this.life.fill(1); this.update(0); }
   emit(x, y, z, vx, vy, vz, size, life) {
     const i = this.next; this.next = (this.next + 1) % DUST_N;
@@ -120,7 +121,7 @@ class Dust {
       const k = i * 3;
       this.v[k] *= drag; this.v[k + 2] *= drag; this.v[k + 1] = this.v[k + 1] * drag + 0.25 * dt;
       this.p[k] += this.v[k] * dt; this.p[k + 1] += this.v[k + 1] * dt; this.p[k + 2] += this.v[k + 2] * dt;
-      const s = this.size[i] * (0.35 + 1.65 * smoothstep(0, 0.4, t)) * (1 - smoothstep(0.5, 1, t));
+      const s = this.size[i] * (0.3 + 1.7 * smoothstep(0, 0.45, t)) * (1 - smoothstep(0.55, 1, t));
       o.position.set(this.p[k], this.p[k + 1], this.p[k + 2]);
       o.rotation.set(this.rot[k] + t, this.rot[k + 1] + t * 0.7, this.rot[k + 2]);
       o.scale.set(s, s * 0.8, s);
@@ -136,7 +137,7 @@ const _w = new THREE.Vector3();
 function emitDust(dt) {
   if (!car.grounded || car.speed < 1.5) { dust.carry[0] = dust.carry[1] = 0; return; }
   const sp = car.speed, slip = car.slip || 0, off = car.offroad || 0;
-  const rate = (sp * 0.75 + slip * 6) * (0.45 + off * 1.3) * smoothstep(1.5, 6, sp); // puffs / s per wheel
+  const rate = (sp * 1.0 + slip * 7) * (0.6 + off * 1.2) * smoothstep(1.5, 6, sp); // puffs / s per wheel
   for (let w = 0; w < 2; w++) {
     dust.carry[w] += rate * dt;
     while (dust.carry[w] >= 1) {
@@ -145,8 +146,8 @@ function emitDust(dt) {
       const r = () => Math.random() - 0.5;
       const big = 1 + Math.min(slip, 12) * 0.05 + off * 0.35;
       dust.emit(_w.x + r() * 0.5, _w.y + 0.25, _w.z + r() * 0.5,
-        car.vx * 0.28 + r() * 2.2, 0.6 + Math.random() * 1.1, car.vz * 0.28 + r() * 2.2,
-        (0.42 + Math.random() * 0.4) * big, 1.1 + Math.random() * 0.9);
+        car.vx * 0.3 + r() * 3, 0.5 + Math.random() * 1.2, car.vz * 0.3 + r() * 3,
+        (0.5 + Math.random() * 0.45) * big, 1.0 + Math.random() * 0.7);
     }
   }
 }
@@ -270,7 +271,7 @@ function checkProgress() {
 const keys = new Set();
 const touchState = { left: false, right: false, gas: false, brake: false, hand: false };
 const pad = { steer: 0, throttle: 0, brake: 0, hand: false, btn: [] };
-const HOLD = { steer: 0, throttle: 0, brake: 1, hand: false };
+const HOLD = { steer: 0, throttle: 0, brake: 0, hand: true }; // brake>0 at rest would engage reverse
 const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
 if (isTouch) document.body.classList.add('touch');
 
@@ -435,7 +436,8 @@ function updateHUD(dt) {
   hud.rpm.style.width = (clamp(car.rpm, 0, 1) * 100).toFixed(1) + '%';
   const f = clamp((car.idx - stage.startIdx) / (stage.finishIdx - stage.startIdx), 0, 1);
   hud.fill.style.width = hud.car.style.left = (f * 100).toFixed(2) + '%';
-  if (state === 'race' && !paused) { hintsT += dt; hud.hints.classList.toggle('show', hintsT < 6); }
+  if (state === 'race' && !paused) hintsT += dt;
+  hud.hints.classList.toggle('show', state === 'race' && hintsT < 6);
 }
 
 function updateCountdown(dt) {
