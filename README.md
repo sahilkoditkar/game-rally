@@ -19,6 +19,7 @@ nothing is loaded from the network.
 | Camera (chase / high / top) | `C` | | |
 | Mute | `M` | | |
 | Ghost on / off | `G` | | Ghost button |
+| Menu: Stages / Garage view | `V` | | tabs |
 | Pause | `Esc` | Start | ‖ button |
 | Menu: choose stage / start | `←` `→` / `Enter` | d-pad ◀ ▶ / A | tap |
 | Menu: previous / next region | `↑` `↓` or `Q` `E` | d-pad ▲ ▼ | tabs |
@@ -43,6 +44,24 @@ back on the road), and pausing offers Resume / Abandon rally. Stage times set in
 towards stage bests and medals. The final results award a rally trophy (same factors applied to the
 summed par) and keep your best total per region. Rallies also work in Duel, where the winner is
 decided on total time and no records are kept.
+
+### Garage
+
+The menu has two views: **Stages** and **Garage** (`V`, or the tabs); START stays pinned at the bottom
+of both. The Garage shows four cars with their speed, acceleration, grip and drift, plus paint:
+
+| Car | Character | Unlocks at |
+| --- | --- | --- |
+| Rook R7 | the all-rounder | from the start |
+| Pip 66 | tiny, grippy, forgiving | 6 medal points |
+| Halvard Longtail | long, fast, loose rear end | 14 medal points |
+| Grendel S | huge pace and grip, bites past the limit | 24 medal points |
+
+Locked cars can be previewed (the menu background shows the selected car), but START stays disabled
+until you have the points. When a result crosses a threshold, the finish panel announces the new car
+and the Garage marks it NEW. In the Garage, `←` `→` change car and `↑` `↓` change paint (in Duel they
+change Player 2's car). Duel is party play: all four cars are open to both players. Stage best times
+are kept per stage across all cars, together with the car that set them.
 
 ### Ghost
 
@@ -80,7 +99,7 @@ npx http-server -p 8080 -c-1     # or: python3 -m http.server 8080
 Then open <http://localhost:8080/>.
 
 Handy URL parameters: `?stage=mesa` preselects a stage (an id, `daily`, or a 0-based index into
-the stage list), `?mode=duel` preselects split-screen duel, `?rally=forest&start=1` jumps straight into a region's rally, `?start=1` skips the menu, and `?auto=1` lets
+the stage list), `?mode=duel` preselects split-screen duel, `?rally=forest&start=1` jumps straight into a region's rally, `?car=pip` / `?car2=grendel` pick cars (even locked ones, for testing), `?start=1` skips the menu, and `?auto=1` lets
 the autopilot drive the race (both cars in a duel). `?cond=night,rain` forces conditions on any
 stage, for testing.
 
@@ -99,6 +118,7 @@ The other modules each handle one part:
 | `player.js` | one racer: car, chase/orbit camera, viewport and timing |
 | `hud.js` | per-player HUD panes and the solo/duel results panels |
 | `menu.js` | main menu: medal points, mode toggle, region tabs and rally strip, stage and daily cards, paints |
+| `garage.js` | car unlocks, NEW tags, which car set each best, car pickers |
 | `ghost.js` | ghost recording, compact storage codec, replay and the ghost-delta lookup |
 | `progress.js` | medals and medal points (derived from best times), rally pars, trophies and rally bests |
 | `input.js` | keyboard, gamepad and touch input |

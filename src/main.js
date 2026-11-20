@@ -9,10 +9,12 @@ import { $, params } from './util.js';
 import { store, getBest, setBest } from './storage.js';
 import { REGIONS, menuIds, getDef, regionOf, nextId, isDaily, dailyDef, conditions } from './catalog.js';
 import { Dust, Rain } from './fx.js';
-import { Player, CAMS, paintKey, updateCamera, aimSun } from './player.js';
+import { Player, CAMS, paintKey, carKey, updateCamera, aimSun } from './player.js';
+import { CARS } from './car.js';
+import { carById, isUnlocked, crossedUnlocks, markNew, markSeen, setBestCar, getBestCar, unlockBlock } from './garage.js';
 import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults, renderRallyStage, renderRallyResults } from './hud.js';
 import { renderMenu, renderMute, getViewRegion } from './menu.js';
-import { medalTimes, medalFor, medalRank, medalUp, rallyStages, rallyPar, parOf, trophyFor, getRallyBest, setRallyBest, medalSummary } from './progress.js';
+import { medalPoints, medalTimes, medalFor, medalRank, medalUp, rallyStages, rallyPar, parOf, trophyFor, getRallyBest, setRallyBest, medalSummary } from './progress.js';
 import { GhostRecorder, GhostPlayer, loadGhost, saveGhost, pruneDailyGhosts, GHOST_ON_KEY } from './ghost.js';
 import { pose } from './player.js';
 import { keys, HOLD, readInput, pollPads, connectedPads, bindKeyboard, bindTouch } from './input.js';
@@ -82,6 +84,34 @@ let cdT = 0, cdShown = null, finishT = 0, lastRun = null, hintsT = 0;
 let cond = { night: false, rain: false, sun: 1, ambient: 1 };
 // championship: { region, ids, idx, phase: 'stage' | 'inter' | 'final', totals: [p0, p1], times: [[], []], medals: [[], []], newMedals: [[], []] }
 let rally = null;
+// garage: chosen car per player; ?car= / ?car2= or the test hook may pick a locked car (lockOverride)
+let menuView = 'stages';
+const carSel = [store.get(carKey(0), 'rook'), store.get(carKey(1), 'pip')].map((id, i) => (carById(id) ? id : i ? 'pip' : 'rook'));
+let lockOverride = false;
+if (!isUnlocked(carSel[0])) carSel[0] = 'rook';
+// why START is blocked (solo with a locked car), or ''
+function blockedReason() {
+  if (mode === 'duel' || lockOverride) return '';
+  const c = carById(carSel[0]);
+  return c && !isUnlocked(c.id) ? `${c.name} unlocks at ${c.unlock} medal points` : '';
+}
+function chooseCar(i, id, { persist = true } = {}) {
+  const c = carById(id) || CARS[0];
+  carSel[i] = c.id;
+  if (persist && (i === 1 || isUnlocked(c.id))) store.set(carKey(i), c.id);
+  if (state === 'menu' && i === 0 && players[0].setCar(c.id)) players[0].place(stage, stage.startIdx); // the menu doubles as a showroom
+  if (state === 'menu' && menuView === 'garage') markSeen(c.id);
+}
+function cycleCar(i, dir) {
+  const k = CARS.findIndex((c) => c.id === carSel[i]);
+  chooseCar(i, CARS[(k + dir + CARS.length) % CARS.length].id);
+  if (state === 'menu') showMenu();
+}
+function setView(v) {
+  menuView = v === 'garage' ? 'garage' : 'stages';
+  if (menuView === 'garage') markSeen(carSel[0]);
+  if (state === 'menu') showMenu();
+}
 // ghost of the best run (solo only): recorded every run, saved on a new stage best, replayed on the next
 let ghostOn = params.get('ghost') === '0' ? false : store.get(GHOST_ON_KEY, true) !== false;
 const recorder = new GhostRecorder();
@@ -200,6 +230,8 @@ window.addEventListener('resize', layout);
 function showMenu(scroll = false) {
   renderMenu({
     sel, mode, duelAvailable: duelAvailable(), players, muted, scroll,
+    view: menuView, cars: carSel, blocked: blockedReason(),
+    onCar: (i, dir) => cycleCar(i, dir), onView: (v) => setView(v),
     onSelect: (id) => select(id), onStart: (id) => { select(id); startStage(id); },
     onRally: (regionId) => startRally(regionId),
     onMode: (m) => setMode(m),
@@ -216,11 +248,14 @@ function setMode(m) {
 // ---------------------------------------------------------------- game flow
 function startStage(key) {
   const def = getDef(key) || getDef(sel);
+  if (blockedReason()) { rally = null; if (state === 'menu') showMenu(); return; }
   withLoading(def, () => {
     sel = def.id;
     loadStage(def);
     racers = mode === 'duel' ? players : [players[0]];
     racers.forEach((p, k) => {
+      p.setCar(carSel[k]);
+      p.lights.setEnabled(cond.night);
       p.resetRun();
       p.place(stage, stage.startIdx, racers.length === 2 ? (k === 0 ? 1.6 : -1.6) : 0); // P1 on the left, P2 on the right
     });
@@ -243,7 +278,7 @@ function toMenu() {
   racers = [players[0]];
   $('countdown').textContent = '';
   const def = getDef(sel);
-  const enter = () => { loadStage(def); players[0].place(stage, stage.startIdx); dust.clear(); };
+  const enter = () => { loadStage(def); players[0].setCar(carSel[0]); players[0].lights.setEnabled(cond.night); players[0].place(stage, stage.startIdx); dust.clear(); };
   if (built.has(def.id)) enter(); else withLoading(def, () => { if (state === 'menu') enter(); });
   showMenu(true);
   setScreen();
@@ -304,17 +339,21 @@ function playerFinish(p) {
   if (racers.length === 1) {
     const id = stage.def.id, prev = getBest(id), t = p.time, s = p.splits.slice(0, 2);
     const isBest = !prev || t < prev.t;
-    if (isBest) setBest(id, { t, s }); // solo only (rally stages count too); the daily stage is keyed by its dated id
+    const ptsBefore = medalPoints();
+    if (isBest) { setBest(id, { t, s }); setBestCar(id, p.car.carId); } // solo only (rally stages count too); the daily stage is keyed by its dated id
     // medals are derived from the best time, so an upgrade is "this run's medal beats the old best's medal"
     const prevMedal = prev ? medalFor(stage.def, prev.t) : null, medal = medalFor(stage.def, t);
     const newMedal = medalRank(medal) > medalRank(prevMedal);
-    lastRun = { t, s, prev, isBest, medal, newMedal, up: medalUp(stage.def, t, medal), ghostSaved: false };
+    const unlocked = crossedUnlocks(ptsBefore, medalPoints());
+    if (unlocked.length) { markNew(unlocked.map((c) => c.id)); setTimeout(() => { snd.beep(660, 0.12); setTimeout(() => snd.beep(880, 0.12), 130); setTimeout(() => snd.beep(1320, 0.3), 260); }, 700); }
+    lastRun = { t, s, prev, isBest, medal, newMedal, up: medalUp(stage.def, t, medal), ghostSaved: false, unlocked, prevCar: prev ? getBestCar(id) : null };
     recorder.sample(t, p.car, true);
     if (isBest) {
       const rec = recorder.build({ carId: p.car.carId || 'rook', paint: p.paint.hex, time: t, splits: s });
       if (rec) lastRun.ghostSaved = saveGhost(id, rec) > 0;
     }
     renderFinish(stage.def, lastRun, nextName);
+    $('finUnlock').innerHTML = unlockBlock(lastRun.unlocked);
   } else paneFinished(racers);
   if (racers.every((q) => q.done)) {
     state = 'finish'; finishT = 0;
@@ -347,6 +386,7 @@ function rallyStageDone() {
     renderRallyStage({
       regionName: region.name, n: k + 1, of: rally.ids.length, stageName: names[k], nextName: names[k + 1], parTotal: parSoFar,
       racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, time: rally.times[i][k], total: rally.totals[i], medal: rally.medals[i][k], newMedal: rally.newMedals[i][k], up: solo ? lastRun.up : null })),
+      unlockHtml: solo ? unlockBlock(lastRun.unlocked) : '',
     });
   } else {
     rally.phase = 'final';
@@ -357,6 +397,7 @@ function rallyStageDone() {
       if (isBest) setRallyBest(rally.region, { t: rally.totals[0], stages: rally.times[0].slice() }); // solo only
     }
     renderRallyResults({
+      unlockHtml: solo ? unlockBlock(lastRun.unlocked) : '',
       regionName: region.name, ids: rally.ids, names, parTotal, trophy, prev, isBest,
       racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, times: rally.times[i], total: rally.totals[i], medals: rally.medals[i] })),
     });
@@ -387,7 +428,12 @@ function onAction(a, who = 0) {
     if (state !== 'menu' && p) { p.camMode = (p.camMode + 1) % CAMS.length; showNotice(p, CAMS[p.camMode].name + ' CAM', 0.9, 'alt'); }
     return;
   }
-  if (state === 'menu') {
+  if (state === 'menu' && menuView === 'garage' && ['left', 'right', 'up', 'down'].includes(a)) {
+    // garage: ←/→ P1 car; ↑/↓ P2 car in duel, P1 paint in solo
+    if (a === 'left' || a === 'right') cycleCar(0, a === 'left' ? -1 : 1);
+    else if (mode === 'duel') cycleCar(1, a === 'up' ? -1 : 1);
+    else { const p = players[0], n = 6; p.setPaint((p.paintIdx + (a === 'up' ? n - 1 : 1)) % n); store.set(paintKey(0), p.paintIdx); showMenu(); }
+  } else if (state === 'menu') {
     if (a === 'left') stepStage(-1);
     else if (a === 'right') stepStage(1);
     else if (a === 'up') stepRegion(-1);
@@ -395,6 +441,7 @@ function onAction(a, who = 0) {
     else if (a === 'confirm') startStage(sel);
     else if (a === 'solo' || a === 'duel') setMode(a);
     else if (a === 'rally') startRally(getViewRegion() || regionOf(sel));
+    else if (a === 'view') setView(menuView === 'garage' ? 'stages' : 'garage');
   } else if (paused) {
     if (a === 'pause') setPaused(false);
   } else if (state === 'countdown' || state === 'race') {
@@ -414,7 +461,7 @@ function onAction(a, who = 0) {
 const KEYMAP = { KeyM: 'mute', KeyG: 'ghost', KeyC: 'camera', Escape: 'pause', KeyP: 'pause', KeyR: 'reset', KeyN: 'next', Enter: 'confirm', NumpadEnter: 'confirm' };
 const MENUKEYS = {
   ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
-  ArrowUp: 'up', KeyQ: 'up', ArrowDown: 'down', KeyE: 'down', Space: 'confirm', Digit1: 'solo', Digit2: 'duel', KeyT: 'rally',
+  ArrowUp: 'up', KeyQ: 'up', ArrowDown: 'down', KeyE: 'down', Space: 'confirm', Digit1: 'solo', Digit2: 'duel', KeyT: 'rally', KeyV: 'view',
 };
 bindKeyboard((e) => {
   let a = KEYMAP[e.code], who = 0;
@@ -464,7 +511,8 @@ $('rally').addEventListener('click', (e) => {
   else if (act === 'abandon' || act === 'menu') toMenu();
   else if (act === 'again' && rally) startRally(rally.region);
 });
-for (const b of document.querySelectorAll('.seg-btn')) b.addEventListener('click', () => onAction(b.dataset.mode));
+for (const b of document.querySelectorAll('.seg-btn[data-mode]')) b.addEventListener('click', () => onAction(b.dataset.mode));
+for (const b of document.querySelectorAll('.view-btn')) b.addEventListener('click', () => setView(b.dataset.view));
 
 // ---------------------------------------------------------------- simulation
 function stepPhysics(dt) {
@@ -615,7 +663,7 @@ function frame(now) {
 window.__game = {
   get state() { return paused ? 'paused' : state; },
   get mode() { return mode; },
-  car: players[0].car,
+  get car() { return players[0].car; },
   get cars() { return racers.map((p) => p.car); },
   get stage() { return stage; },
   get stages() { return menuIds(); },
@@ -627,6 +675,9 @@ window.__game = {
   medals: () => medalSummary(),
   get ghost() { return ghost ? { time: ghost.time, carId: ghost.rec.carId, active: ghostOn && ghost.car.group.visible, delta: ghostDelta, t: ghostT } : null; },
   get ghostOn() { return ghostOn; },
+  get carSel() { return carSel.slice(); },
+  setCar(id, i = 0) { if (!carById(id)) return false; lockOverride = lockOverride || i === 0; chooseCar(i, id, { persist: false }); if (state === 'menu') showMenu(); return true; },
+  setView,
   selectStage(key) { const d = getDef(key); if (!d) return false; if (state === 'menu') select(d.id); else sel = d.id; return d.id; },
   setMode,
   get time() { return players[0].time; },
@@ -635,6 +686,10 @@ window.__game = {
 };
 
 function boot() {
+  for (const [k, i] of [['car', 0], ['car2', 1]]) {
+    const id = params.get(k);
+    if (id && carById(id)) { carSel[i] = id; if (i === 0) lockOverride = true; }
+  }
   pruneDailyGhosts();
   renderGhostBtn();
   const ps = params.get('stage');
@@ -643,6 +698,7 @@ function boot() {
   sel = (getDef(ps != null ? ps : saved != null ? saved : 0) || getDef(0)).id;
   mode = (params.get('mode') || store.get('dustline.mode', 'solo')) === 'duel' && duelAvailable() ? 'duel' : 'solo';
   loadStage(getDef(sel));
+  players[0].setCar(carSel[0]); players[0].lights.setEnabled(cond.night);
   players[0].place(stage, stage.startIdx);
   const pr = params.get('rally');
   if (pr && params.get('start') === '1' && rallyStages(pr).length) startRally(pr);

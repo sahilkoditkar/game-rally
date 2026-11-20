@@ -137,7 +137,7 @@ export function renderFinish(def, run, nextName) {
   $('finTime').textContent = fmt(t);
   $('finBest').innerHTML = isBest
     ? `<span class="newbest">NEW BEST</span>${prev ? ` &nbsp;${fmtDelta(t - prev.t)} on ${fmt(prev.t)}` : ''}${run.ghostSaved ? ' <span class="ghost-saved">ghost saved</span>' : ''}`
-    : `Best ${fmt(prev.t)} &nbsp;<span style="color:var(--bad)">${fmtDelta(t - prev.t)}</span>`;
+    : `Best ${fmt(prev.t)}${run.prevCar ? ` <span class="best-car">${esc(run.prevCar.name)}</span>` : ''} &nbsp;<span style="color:var(--bad)">${fmtDelta(t - prev.t)}</span>`;
   const rows = [['Split 1', s[0], prev && prev.s ? prev.s[0] : null], ['Split 2', s[1], prev && prev.s ? prev.s[1] : null], ['Finish', t, prev ? prev.t : null]];
   $('finSplits').innerHTML = rows.map(([n, v, b]) => {
     const d = v != null && b != null ? v - b : null;
@@ -180,7 +180,7 @@ export function renderRallyStage(info) {
   if (solo) {
     const d = info.parTotal != null ? a.total - info.parTotal : null;
     body = `<div class="fin-time">${fmt(a.time)}</div>
-      <div class="rally-medal">${medalBlock(a.medal, a.newMedal, a.up)}</div>
+      <div class="rally-medal">${medalBlock(a.medal, a.newMedal, a.up)}</div>${info.unlockHtml || ''}
       <div class="rally-cum"><span class="lbl">Total</span> <b>${fmt(a.total)}</b>${d != null ? ` <span class="lbl">vs par ${fmt(info.parTotal)}</span> <span class="${deltaClass(d)}">${fmtDelta(d)}</span>` : ''}</div>`;
   } else {
     body = `<table class="splits duel-splits"><tr class="hd"><td></td>${info.racers.map((r) => `<td><span class="pchip" style="background:${r.hex}"></span>${r.name}</td>`).join('')}</tr>
@@ -201,7 +201,7 @@ export function renderRallyResults(info) {
     const d = info.prev ? a.total - info.prev.t : null;
     head = `<div class="fin-time">${fmt(a.total)}</div>
       <div class="fin-best">${info.isBest ? `<span class="newbest">NEW BEST</span>${info.prev ? ` &nbsp;${fmtDelta(d)} on ${fmt(info.prev.t)}` : ''}` : `Best ${fmt(info.prev.t)} &nbsp;<span style="color:var(--bad)">${fmtDelta(d)}</span>`}</div>
-      <div class="rally-medal">${trophyBlock(info.trophy)}</div>`;
+      <div class="rally-medal">${trophyBlock(info.trophy)}</div>${info.unlockHtml || ''}`;
   } else {
     const [p, q] = info.racers, gap = Math.abs(p.total - q.total), w = p.total <= q.total ? p : q;
     head = `<div class="winner" style="--pc:${gap < 0.0005 ? 'var(--mustard)' : w.hex}">${gap < 0.0005 ? '<span class="w-name">DEAD HEAT</span>' : `<span class="w-chip"></span><span class="w-name">${w.name} WINS</span>`}</div>
