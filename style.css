@@ -592,3 +592,6 @@ body.touch .rpm { width: 90px; }
 .rs-info { min-width: 0; }
 .menu-foot { background: linear-gradient(180deg, rgba(240,234,220,0), rgba(240,234,220,0.97) 10px); box-shadow: 0 -8px 12px -10px rgba(36,37,45,0.25); }
 @media (max-width: 720px) { .tab { min-height: 30px; height: auto; padding: 3px 7px; text-align: left; line-height: 1.1; } }
+#rallyBody .duel-splits td:not(:first-child) { color: var(--char); font-size: 18px; font-weight: 900; font-style: italic; }
+#rallyBody .duel-splits td.win { color: var(--good); }
+#rallyBody .duel-splits tr.hd td { font-size: 12px; font-style: normal; color: var(--muted); }
