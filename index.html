@@ -48,11 +48,11 @@
   <div id="menu" class="menu hidden">
     <div class="menu-panel">
       <header class="brand">
-        <div class="logo"><span class="logo-slash"></span><span class="logo-word">DUSTLINE</span></div>
         <div class="brand-row">
-          <div class="tagline">a pocket rally &mdash; one car, one clock</div>
+          <div class="logo"><span class="logo-slash"></span><span class="logo-word">DUSTLINE</span></div>
           <div class="points" id="points" title="Medal points: bronze 1, silver 2, gold 3"></div>
         </div>
+        <div class="tagline">a pocket rally &mdash; one car, one clock</div>
       </header>
 
       <div class="mode-row">
@@ -64,20 +64,12 @@
       </div>
 
       <section class="menu-sec">
-        <div class="sec-head"><h2>Stage</h2><span class="sec-hint kbd-only">&larr; &rarr; stage &middot; &uarr; &darr; region</span></div>
+        <div class="sec-head stage-head"><h2>Stage</h2><span class="sec-hint kbd-only">&larr; &rarr; stage &middot; &uarr; &darr; region</span></div>
         <div class="tabs" id="regionTabs" role="tablist" aria-label="Regions"></div>
         <div class="region-blurb" id="regionBlurb"></div>
         <div class="rally-strip" id="rallyStrip"></div>
         <div class="cards" id="cards"></div>
         <div class="daily-slot" id="dailySlot"></div>
-      </section>
-
-      <section class="menu-sec">
-        <div class="sec-head"><h2>Paint</h2><span class="sec-hint" id="paintName"></span></div>
-        <div class="paint-rows">
-          <div class="paint-row"><span class="pl-label">P1</span><div class="paints" id="paints"></div></div>
-          <div class="paint-row p2-only"><span class="pl-label">P2</span><div class="paints" id="paints2"></div></div>
-        </div>
       </section>
 
       <div class="legend legend-keys">
@@ -114,10 +106,20 @@
         <span>GAS / BRAKE on the right</span>
         <span>HAND for hairpins</span>
       </div>
-      <!-- sticky to the bottom of the scrolling panel, so START is always reachable -->
-      <div class="menu-actions">
-        <button class="btn primary big" id="startBtn">START<span class="btn-key">Enter</span></button>
-        <button class="btn ghost" id="muteBtn" aria-pressed="false">Sound on</button>
+      <!-- pinned to the bottom of the scrolling panel: paint + START are always reachable -->
+      <div class="menu-foot">
+        <section class="paint-sec">
+          <h2>Paint</h2>
+          <div class="paint-rows">
+            <div class="paint-row"><span class="pl-label">P1</span><div class="paints" id="paints"></div></div>
+            <div class="paint-row p2-only"><span class="pl-label">P2</span><div class="paints" id="paints2"></div></div>
+          </div>
+          <span class="sec-hint" id="paintName"></span>
+        </section>
+        <div class="menu-actions">
+          <button class="btn primary big" id="startBtn">START<span class="btn-key">Enter</span></button>
+          <button class="btn ghost" id="muteBtn" aria-pressed="false">Sound on</button>
+        </div>
       </div>
     </div>
   </div>

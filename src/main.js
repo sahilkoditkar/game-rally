@@ -306,7 +306,7 @@ function playerFinish(p) {
 function startRally(regionId) {
   const ids = rallyStages(regionId);
   if (!ids.length) return;
-  rally = { region: regionId, ids, idx: 0, phase: 'stage', totals: [0, 0], times: [[], []], medals: [[], []], newMedals: [[], []] };
+  rally = { region: regionId, ids, idx: 0, phase: 'stage', totals: [0, 0], base: [0, 0], times: [[], []], medals: [[], []], newMedals: [[], []] };
   startStage(ids[0]);
 }
 
@@ -324,7 +324,7 @@ function rallyStageDone() {
     const parSoFar = parTotal == null ? null : rally.ids.slice(0, k + 1).reduce((s, id) => s + parOf(getDef(id)), 0);
     renderRallyStage({
       regionName: region.name, n: k + 1, of: rally.ids.length, stageName: names[k], nextName: names[k + 1], parTotal: parSoFar,
-      racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, time: rally.times[i][k], total: rally.totals[i], medal: rally.medals[i][k], newMedal: rally.newMedals[i][k] })),
+      racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, time: rally.times[i][k], total: rally.totals[i], medal: rally.medals[i][k], newMedal: rally.newMedals[i][k], up: solo ? lastRun.up : null })),
     });
   } else {
     rally.phase = 'final';
@@ -343,7 +343,7 @@ function rallyStageDone() {
 
 function rallyContinue() {
   if (!rally || rally.phase !== 'inter') return;
-  rally.idx++; rally.phase = 'stage';
+  rally.idx++; rally.phase = 'stage'; rally.base = rally.totals.slice();
   startStage(rally.ids[rally.idx]);
 }
 
@@ -546,7 +546,7 @@ function frame(now) {
     updateCamera(p, dt, stage, state === 'menu' ? 'menu' : p.done && p.doneT > 1.1 ? 'finish' : null);
   });
   if (state !== 'menu' && state !== 'boot') {
-    updatePanes(racers, stage, state, rally ? { n: rally.idx + 1, of: rally.ids.length, totals: rally.totals } : null);
+    updatePanes(racers, stage, state, rally ? { n: rally.idx + 1, of: rally.ids.length, totals: rally.base } : null); // base = totals before this stage, so the HUD never double counts
     if (state === 'race' && !paused) hintsT += dt;
     $('hints').classList.toggle('show', state === 'race' && racers.length === 1 && hintsT < 6);
   }

@@ -177,7 +177,7 @@ export function renderRallyStage(info) {
   if (solo) {
     const d = info.parTotal != null ? a.total - info.parTotal : null;
     body = `<div class="fin-time">${fmt(a.time)}</div>
-      <div class="rally-medal">${medalBlock(a.medal, a.newMedal, null)}</div>
+      <div class="rally-medal">${medalBlock(a.medal, a.newMedal, a.up)}</div>
       <div class="rally-cum"><span class="lbl">Total</span> <b>${fmt(a.total)}</b>${d != null ? ` <span class="lbl">vs par ${fmt(info.parTotal)}</span> <span class="${deltaClass(d)}">${fmtDelta(d)}</span>` : ''}</div>`;
   } else {
     body = `<table class="splits duel-splits"><tr class="hd"><td></td>${info.racers.map((r) => `<td><span class="pchip" style="background:${r.hex}"></span>${r.name}</td>`).join('')}</tr>

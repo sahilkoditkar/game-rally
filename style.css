@@ -213,12 +213,18 @@ body.duel .countdown { top: 50%; }
   padding-bottom: 0; scrollbar-width: thin; scrollbar-color: rgba(36,37,45,0.3) transparent;
 }
 .menu-panel > * { flex-shrink: 0; }
-/* START + mute stay pinned to the bottom of the scrolling panel */
-.menu-actions {
+/* paint + START + mute stay pinned to the bottom of the scrolling panel */
+.menu-foot {
   position: sticky; bottom: 0; z-index: 2; margin-top: auto;
-  padding: 14px 0 calc(18px + var(--safe-b));
-  background: linear-gradient(180deg, rgba(240,234,220,0), rgba(240,234,220,0.94) 22px);
+  padding: 16px 0 calc(16px + var(--safe-b));
+  background: linear-gradient(180deg, rgba(240,234,220,0), rgba(240,234,220,0.95) 18px);
+  display: flex; flex-direction: column; gap: 10px;
 }
+.paint-sec { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.paint-sec h2 { margin: 0; font-size: 13px; font-weight: 900; letter-spacing: .2em; text-transform: uppercase; color: var(--accent); }
+.paint-sec .sec-hint { margin-left: auto; }
+.paint-sec .swatch { width: 30px; height: 30px; }
+.paint-sec .paints { gap: 7px; }
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
 .tab {
   position: relative; height: 30px; padding: 0 12px; border: 0; border-radius: 5px;
@@ -555,3 +561,34 @@ body.touch .rpm { width: 90px; }
   .logo-word { font-size: 56px; }
 }
 @media (max-width: 720px) { .card { grid-template-columns: 30px 1fr auto 24px; } .card-targets { gap: 10px; font-size: 12px; } }
+
+/* compact header + tabs (medals round) */
+.brand-row { margin-top: 0; align-items: center; }
+.points { margin-left: auto; }
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.tab { justify-content: space-between; font-size: 12px; padding: 0 9px; }
+.rally-strip { padding: 6px 8px 6px 10px; }
+.rs-info { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.menu.duel .paint-rows { gap: 12px; }
+.menu.duel .paint-sec .swatch { width: 24px; height: 24px; }
+.menu.duel .paint-sec .paints { gap: 4px; }
+.menu.duel .paint-sec .sec-hint { display: none; }
+@media (max-height: 800px) and (min-width: 721px) {
+  .tagline, .stage-head { display: none; }
+  .logo-word { font-size: 50px; }
+  .logo-slash { width: 24px; height: 36px; }
+  .menu-panel { gap: 12px; padding-top: 20px; }
+}
+@media (max-width: 720px) {
+  .logo-word { font-size: 44px; }
+  .logo-slash { width: 20px; height: 32px; }
+  .tab { font-size: 11px; padding: 0 7px; }
+}
+.brand-row { flex-wrap: nowrap; }
+.points { grid-template-columns: auto auto; gap: 0 4px; justify-items: start; flex-shrink: 0; }
+.pt-lbl { grid-column: 1 / -1; }
+.pt-bar { width: 96px; }
+.rally-btn { white-space: nowrap; font-size: 12px; min-height: 34px; flex-shrink: 0; }
+.rs-info { min-width: 0; }
+.menu-foot { background: linear-gradient(180deg, rgba(240,234,220,0), rgba(240,234,220,0.97) 10px); box-shadow: 0 -8px 12px -10px rgba(36,37,45,0.25); }
+@media (max-width: 720px) { .tab { min-height: 30px; height: auto; padding: 3px 7px; text-align: left; line-height: 1.1; } }
