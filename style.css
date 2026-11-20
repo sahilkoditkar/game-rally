@@ -173,6 +173,7 @@ kbd {
 }
 .notice.show { opacity: 1; }
 .notice.alt { background: var(--mustard); color: var(--char); }
+.notice.splash { background: #2b7fa8; color: #eef8ff; }
 
 /* ---------- split-screen duel ---------- */
 .pane-msg {

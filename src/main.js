@@ -386,6 +386,12 @@ function watchdog(p, dt) {
     else resetPlayer(p, 'OFF COURSE');
     return;
   }
+  // coast stages: the seabed under the sea plane is drivable terrain, so treat going under water as off course
+  const sea = stage.def.seaLevel;
+  if (typeof sea === 'number' && car.y < sea - 0.6) {
+    if (state === 'menu') p.place(stage, clamp(car.idx | 0, 0, stage.n - 1));
+    else { resetPlayer(p); showNotice(p, 'IN THE DRINK', 1.6, 'splash'); }
+  }
   if (state === 'menu') {
     if (car.idx >= stage.finishIdx) p.place(stage, stage.startIdx); // attract mode loops the stage
     p.stuckT = car.speed < 1 ? p.stuckT + dt : 0;
