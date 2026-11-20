@@ -49,7 +49,10 @@
     <div class="menu-panel">
       <header class="brand">
         <div class="logo"><span class="logo-slash"></span><span class="logo-word">DUSTLINE</span></div>
-        <div class="tagline">a pocket rally &mdash; one car, one clock</div>
+        <div class="brand-row">
+          <div class="tagline">a pocket rally &mdash; one car, one clock</div>
+          <div class="points" id="points" title="Medal points: bronze 1, silver 2, gold 3"></div>
+        </div>
       </header>
 
       <div class="mode-row">
@@ -64,14 +67,17 @@
         <div class="sec-head"><h2>Stage</h2><span class="sec-hint kbd-only">&larr; &rarr; stage &middot; &uarr; &darr; region</span></div>
         <div class="tabs" id="regionTabs" role="tablist" aria-label="Regions"></div>
         <div class="region-blurb" id="regionBlurb"></div>
+        <div class="rally-strip" id="rallyStrip"></div>
         <div class="cards" id="cards"></div>
         <div class="daily-slot" id="dailySlot"></div>
       </section>
 
       <section class="menu-sec">
         <div class="sec-head"><h2>Paint</h2><span class="sec-hint" id="paintName"></span></div>
-        <div class="paint-row"><span class="pl-label">P1</span><div class="paints" id="paints"></div></div>
-        <div class="paint-row p2-only"><span class="pl-label">P2</span><div class="paints" id="paints2"></div></div>
+        <div class="paint-rows">
+          <div class="paint-row"><span class="pl-label">P1</span><div class="paints" id="paints"></div></div>
+          <div class="paint-row p2-only"><span class="pl-label">P2</span><div class="paints" id="paints2"></div></div>
+        </div>
       </section>
 
       <div class="legend legend-keys">
@@ -83,6 +89,7 @@
         <span><kbd>C</kbd> camera</span>
         <span><kbd>M</kbd> mute</span>
         <span><kbd>Esc</kbd> pause</span>
+        <span><kbd>T</kbd> start rally</span>
       </div>
       <div class="legend legend-duel">
         <span class="lg-p">P1</span>
@@ -100,6 +107,7 @@
         <span>Pads: 1st &rarr; P1, 2nd &rarr; P2</span>
         <span><kbd>Esc</kbd> pause</span>
         <span><kbd>M</kbd> mute</span>
+        <span><kbd>T</kbd> rally</span>
       </div>
       <div class="legend legend-touch">
         <span>&#9664; &#9654; steer on the left</span>
@@ -133,6 +141,7 @@
       <div class="panel-kicker" id="finStage">Stage complete</div>
       <div class="fin-time" id="finTime">0:00.000</div>
       <div class="fin-best" id="finBest"></div>
+      <div class="fin-medal" id="finMedal"></div>
       <table class="splits" id="finSplits"></table>
       <div class="panel-btns">
         <button class="btn primary" id="retryBtn">Retry<span class="btn-key">R</span></button>
@@ -155,6 +164,11 @@
         <button class="btn ghost" id="dfMenu">Menu<span class="btn-key">Enter</span></button>
       </div>
     </div>
+  </div>
+
+  <!-- ===== Rally interstitial / results (content rendered by hud.js) ===== -->
+  <div id="rally" class="overlay hidden">
+    <div class="panel rally-panel" id="rallyBody"></div>
   </div>
 
   <div id="loading" class="loading"><div class="loading-bar"></div><span>Laying gravel&hellip;</span></div>
