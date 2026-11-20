@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#24252d">
+  <meta name="description" content="Dustline: a pocket rally. Low-poly time-trial stages in the browser.">
+  <title>Dustline</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2324252d'/%3E%3Cpath d='M6 22 L14 9 L19 9 L11 22Z' fill='%23e2472f'/%3E%3Cpath d='M15 22 L23 9 L27 9 L19 22Z' fill='%23f2b632'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- ===== HUD ===== -->
+  <div id="hud" class="hidden" aria-hidden="true">
+    <div class="hud-tl">
+      <div class="hud-stage" id="hudStage">Stage</div>
+      <div class="hud-time" id="hudTime">0:00.000</div>
+      <div class="hud-split" id="hudSplit"></div>
+    </div>
+    <div class="hud-progress">
+      <div class="prog" id="prog">
+        <div class="prog-fill" id="progFill"></div>
+        <div class="prog-ticks" id="progTicks"></div>
+        <div class="prog-car" id="progCar"></div>
+      </div>
+    </div>
+    <div class="hud-br" id="hudSpeedBox">
+      <div class="speed"><span id="hudSpeed">0</span><small>km/h</small></div>
+      <div class="gearrow">
+        <span class="gear" id="hudGear">1</span>
+        <div class="rpm"><div class="rpm-fill" id="hudRpm"></div></div>
+      </div>
+    </div>
+    <div class="hud-bl" id="hints">
+      <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> gas / brake</span>
+      <span><kbd>&larr;</kbd><kbd>&rarr;</kbd> steer</span>
+      <span><kbd>Space</kbd> handbrake</span>
+      <span><kbd>R</kbd> reset <kbd>C</kbd> camera <kbd>Esc</kbd> pause</span>
+    </div>
+    <button class="icon-btn pause-btn" id="pauseBtn" aria-label="Pause"><span></span><span></span></button>
+  </div>
+
+  <div id="countdown" class="countdown"></div>
+  <div id="notice" class="notice"></div>
+
+  <!-- ===== Touch controls ===== -->
+  <div id="touch" class="touch hidden">
+    <div class="t-left">
+      <button class="t-btn t-steer" data-ctl="left" aria-label="Steer left">&#9664;</button>
+      <button class="t-btn t-steer" data-ctl="right" aria-label="Steer right">&#9654;</button>
+    </div>
+    <div class="t-right">
+      <div class="t-small">
+        <button class="t-btn t-mini" data-ctl="reset" aria-label="Reset">RESET</button>
+        <button class="t-btn t-mini" data-ctl="hand" aria-label="Handbrake">HAND</button>
+      </div>
+      <button class="t-btn t-brake" data-ctl="brake">BRAKE</button>
+      <button class="t-btn t-gas" data-ctl="gas">GAS</button>
+    </div>
+  </div>
+
+  <!-- ===== Menu ===== -->
+  <div id="menu" class="menu hidden">
+    <div class="menu-panel">
+      <header class="brand">
+        <div class="logo"><span class="logo-slash"></span><span class="logo-word">DUSTLINE</span></div>
+        <div class="tagline">a pocket rally &mdash; three stages, one clock</div>
+      </header>
+
+      <section class="menu-sec">
+        <div class="sec-head"><h2>Stage</h2><span class="sec-hint">&larr; &rarr; to choose</span></div>
+        <div class="cards" id="cards"></div>
+      </section>
+
+      <section class="menu-sec">
+        <div class="sec-head"><h2>Paint</h2><span class="sec-hint" id="paintName"></span></div>
+        <div class="paints" id="paints"></div>
+      </section>
+
+      <div class="menu-actions">
+        <button class="btn primary big" id="startBtn">START<span class="btn-key">Enter</span></button>
+        <button class="btn ghost" id="muteBtn" aria-pressed="false">Sound on</button>
+      </div>
+
+      <div class="legend legend-keys">
+        <span><kbd>&uarr;</kbd>/<kbd>W</kbd> gas</span>
+        <span><kbd>&darr;</kbd>/<kbd>S</kbd> brake</span>
+        <span><kbd>&larr;</kbd><kbd>&rarr;</kbd> steer</span>
+        <span><kbd>Space</kbd> handbrake</span>
+        <span><kbd>R</kbd> reset</span>
+        <span><kbd>C</kbd> camera</span>
+        <span><kbd>M</kbd> mute</span>
+        <span><kbd>Esc</kbd> pause</span>
+      </div>
+      <div class="legend legend-touch">
+        <span>&#9664; &#9654; steer on the left</span>
+        <span>GAS / BRAKE on the right</span>
+        <span>HAND for hairpins</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Pause ===== -->
+  <div id="pause" class="overlay hidden">
+    <div class="panel small">
+      <div class="panel-kicker">Paused</div>
+      <div class="panel-title" id="pauseStage">Stage</div>
+      <div class="panel-btns col">
+        <button class="btn primary" id="resumeBtn">Resume<span class="btn-key">Esc</span></button>
+        <button class="btn" id="restartBtn">Restart stage</button>
+        <button class="btn ghost" id="pMenuBtn">Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Finish ===== -->
+  <div id="finish" class="overlay hidden">
+    <div class="panel">
+      <div class="panel-kicker" id="finStage">Stage complete</div>
+      <div class="fin-time" id="finTime">0:00.000</div>
+      <div class="fin-best" id="finBest"></div>
+      <table class="splits" id="finSplits"></table>
+      <div class="panel-btns">
+        <button class="btn primary" id="retryBtn">Retry<span class="btn-key">R</span></button>
+        <button class="btn" id="nextBtn">Next stage<span class="btn-key">N</span></button>
+        <button class="btn ghost" id="fMenuBtn">Menu<span class="btn-key">Enter</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="loading" class="loading"><div class="loading-bar"></div><span>Laying gravel&hellip;</span></div>
+
+  <noscript><p class="noscript">Dustline needs JavaScript and WebGL.</p></noscript>
+
+  <script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
