@@ -346,11 +346,11 @@ export class Stage {
         }
         const tries = flora === 'desert' ? 2 : 4;
         for (let a = 0; a < tries; a++) {
-          const off = ROAD_HALF + 4.5 + Math.pow(R(), 1.7) * 130;
+          const off = ROAD_HALF + 6.5 + Math.pow(R(), 1.7) * 130;
           const x = this.sx[i] + this.tz[i] * off * side, z = this.sz[i] - this.tx[i] * off * side;
           const n = this.nearest(x, z);
           const dist = n ? n.d : 99;
-          if (dist < ROAD_HALF + 4) continue;
+          if (dist < ROAD_HALF + 6) continue;
           const dens = this.n2(x / 55 + 3, z / 55) * 0.5 + 0.5;
           const thresh = flora === 'desert' ? 0.62 : flora === 'snow' ? 0.42 : 0.3;
           if (dens < thresh && R() < 0.85) continue;
