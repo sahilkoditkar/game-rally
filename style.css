@@ -97,23 +97,26 @@ kbd {
 .hud-progress {
   position: absolute; left: 50%; top: calc(26px + var(--safe-t)); width: min(40vw, 460px); transform: translateX(-50%);
 }
-.prog { position: relative; height: 8px; border-radius: 4px; background: rgba(36,37,45,0.55); box-shadow: 0 0 0 2px rgba(244,239,226,0.5); }
+.prog { position: relative; height: 8px; border-radius: 4px; background: rgba(36,37,45,0.72); box-shadow: 0 0 0 2px rgba(244,239,226,0.55), 0 0 0 3.5px rgba(36,37,45,0.35); }
 .prog-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 4px; background: var(--cream); }
 .prog-ticks i { position: absolute; top: -4px; width: 3px; height: 16px; margin-left: -1.5px; background: var(--mustard); border-radius: 1px; }
 .prog-ticks i.end { background: var(--accent); }
 .prog-car {
   position: absolute; top: 50%; left: 0; width: 16px; height: 16px; margin: -8px 0 0 -8px;
-  background: var(--accent); border: 3px solid var(--cream); border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  background: var(--accent); border: 3px solid var(--cream); border-radius: 50%; box-shadow: 0 0 0 1.5px var(--char), 0 2px 4px rgba(0,0,0,0.3);
 }
 
 .hud-br {
   position: absolute; right: calc(var(--gut) + var(--safe-r) + 8px); bottom: calc(20px + var(--safe-b));
   text-align: right; color: var(--cream);
+  /* charcoal slanted plate (same family as the timer) so the readout survives snow and bright sky */
+  background: var(--char-soft); padding: 6px 16px 10px 20px; border-radius: 4px; transform: skewX(-8deg);
+  border-right: 5px solid var(--accent); box-shadow: 0 4px 14px rgba(0,0,0,0.18);
 }
 .speed {
-  font-family: var(--num); font-weight: 900; font-style: italic; line-height: .9; text-shadow: 0 3px 0 rgba(0,0,0,0.25);
+  font-family: var(--num); font-weight: 900; font-style: italic; line-height: .9; text-shadow: 0 2px 0 rgba(0,0,0,0.35);
 }
-.speed span { font-size: 84px; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.speed span { font-size: 76px; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 .speed small { font-size: 16px; margin-left: 6px; letter-spacing: .08em; color: var(--cream-2); }
 .gearrow { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 .gear {
@@ -121,7 +124,7 @@ kbd {
   background: var(--mustard); color: var(--char); border-radius: 4px; transform: skewX(-10deg);
   font-weight: 900; font-style: italic; font-size: 22px;
 }
-.rpm { width: 150px; height: 8px; border-radius: 4px; background: rgba(36,37,45,0.6); overflow: hidden; box-shadow: 0 0 0 2px rgba(244,239,226,0.4); }
+.rpm { width: 150px; height: 8px; border-radius: 4px; background: rgba(0,0,0,0.45); overflow: hidden; box-shadow: 0 0 0 1px rgba(244,239,226,0.35); }
 .rpm-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--cream) 0 70%, var(--mustard) 70% 88%, var(--accent) 88%); background-size: 150px 100%; }
 
 .hud-bl {
@@ -215,6 +218,10 @@ body.touch .legend-touch { display: flex; }
   animation: panelIn .35s cubic-bezier(.2,1.2,.4,1);
 }
 .panel.small { width: min(340px, 100%); }
+/* finish: panel in the left third, camera frames the car on the right (wide screens) */
+@media (min-width: 721px) {
+  #finish { justify-content: flex-start; padding-left: max(5vw, 32px); background: linear-gradient(90deg, rgba(36,37,45,0.42), rgba(36,37,45,0.12) 55%, rgba(36,37,45,0)); }
+}
 @keyframes panelIn { from { transform: translateY(20px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
 .panel-kicker { font-size: 13px; font-weight: 900; letter-spacing: .2em; text-transform: uppercase; color: var(--accent); }
 .panel-title { font-size: 30px; font-weight: 900; font-style: italic; text-transform: uppercase; margin: 4px 0 18px; }
@@ -272,7 +279,8 @@ body.touch .legend-touch { display: flex; }
 /* touch layout: speed readout moves to top-right, hints hidden */
 body.touch .hud-bl { display: none; }
 body.touch .hud-br { top: calc(68px + var(--safe-t)); bottom: auto; }
-body.touch .speed span { font-size: 48px; }
+body.touch .speed span { font-size: 44px; }
+body.touch .hud-br { padding: 4px 12px 8px 14px; }
 body.touch .rpm { width: 90px; }
 
 /* ---------- narrow / portrait ---------- */
@@ -301,7 +309,7 @@ body.touch .rpm { width: 90px; }
   .pause-btn { top: calc(8px + var(--safe-t)); width: 36px; height: 36px; }
   .hud-br { right: calc(var(--gut) + var(--safe-r)); }
   body.touch .hud-br { top: calc(52px + var(--safe-t)); }
-  .speed span { font-size: 60px; }
+  .speed span { font-size: 54px; }
   .fin-time { font-size: 54px; }
   .panel { padding: 22px 18px 18px; }
   .notice { font-size: 20px; }

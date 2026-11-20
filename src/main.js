@@ -76,7 +76,8 @@ function onResize() {
 function applyViewOffset() {
   const w = window.innerWidth, h = window.innerHeight;
   // in the menu, nudge the car out from under the panel (right on wide screens, up on portrait)
-  if (state === 'menu' && w > 720) camera.setViewOffset(w, h, -Math.min(w * 0.2, 300), 0, w, h);
+  const side = state === 'menu' || (state === 'finish' && finishT > 1.1);
+  if (side && w > 720) camera.setViewOffset(w, h, -Math.min(w * 0.2, 300), 0, w, h);
   else if (state === 'menu') camera.setViewOffset(w, h, 0, h * 0.12, w, h);
   else camera.clearViewOffset();
   camera.updateProjectionMatrix();
@@ -84,10 +85,10 @@ function applyViewOffset() {
 window.addEventListener('resize', onResize);
 
 // ---------------------------------------------------------------- dust
-const DUST_N = 160;
+const DUST_N = 160, DUST_MAX = 1.45; // max puff radius (m)
 class Dust {
   constructor() {
-    this.mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.34, depthWrite: false, flatShading: true });
+    this.mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.28, depthWrite: false, flatShading: true });
     this.mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), this.mat, DUST_N);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
@@ -121,7 +122,7 @@ class Dust {
       const k = i * 3;
       this.v[k] *= drag; this.v[k + 2] *= drag; this.v[k + 1] = this.v[k + 1] * drag + 0.25 * dt;
       this.p[k] += this.v[k] * dt; this.p[k + 1] += this.v[k + 1] * dt; this.p[k + 2] += this.v[k + 2] * dt;
-      const s = this.size[i] * (0.3 + 1.7 * smoothstep(0, 0.45, t)) * (1 - smoothstep(0.55, 1, t));
+      const s = Math.min(DUST_MAX, this.size[i] * (0.45 + 1.35 * smoothstep(0, 0.3, t))) * (1 - smoothstep(0.35, 1, t));
       o.position.set(this.p[k], this.p[k + 1], this.p[k + 2]);
       o.rotation.set(this.rot[k] + t, this.rot[k + 1] + t * 0.7, this.rot[k + 2]);
       o.scale.set(s, s * 0.8, s);
@@ -137,17 +138,18 @@ const _w = new THREE.Vector3();
 function emitDust(dt) {
   if (!car.grounded || car.speed < 1.5) { dust.carry[0] = dust.carry[1] = 0; return; }
   const sp = car.speed, slip = car.slip || 0, off = car.offroad || 0;
-  const rate = (sp * 1.0 + slip * 7) * (0.6 + off * 1.2) * smoothstep(1.5, 6, sp); // puffs / s per wheel
+  // straight-line driving leaves a light trail; sliding (slip) and verges throw much more
+  const rate = (sp * 0.45 + slip * slip * 0.9 + slip * 4) * (0.55 + off * 1.1) * smoothstep(1.5, 6, sp); // puffs / s per wheel
   for (let w = 0; w < 2; w++) {
     dust.carry[w] += rate * dt;
     while (dust.carry[w] >= 1) {
       dust.carry[w] -= 1;
       car.wheelWorld(2 + w, _w);
       const r = () => Math.random() - 0.5;
-      const big = 1 + Math.min(slip, 12) * 0.05 + off * 0.35;
+      const big = 1 + Math.min(slip, 10) * 0.04 + off * 0.25;
       dust.emit(_w.x + r() * 0.5, _w.y + 0.25, _w.z + r() * 0.5,
-        car.vx * 0.3 + r() * 3, 0.5 + Math.random() * 1.2, car.vz * 0.3 + r() * 3,
-        (0.5 + Math.random() * 0.45) * big, 1.0 + Math.random() * 0.7);
+        car.vx * 0.22 + r() * 2.4, 0.3 + Math.random() * 0.8, car.vz * 0.22 + r() * 2.4,
+        (0.45 + Math.random() * 0.35) * big, 0.75 + Math.random() * 0.5);
     }
   }
 }
@@ -370,11 +372,14 @@ let camMode = 0, camSnap = true, camYaw = 0, shake = 0, orbitA = 0;
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), _v = new THREE.Vector3(), _l = new THREE.Vector3();
 
 function updateCamera(dt) {
-  if (state === 'menu') {
+  const orbit = state === 'menu' || (state === 'finish' && finishT > 1.1);
+  if (orbit) {
+    // side-on orbit (never straight behind, where the dust plume trails), high enough to look over it
     orbitA += dt * 0.12;
-    const a = car.yaw + Math.PI * 0.75 + Math.sin(orbitA) * 1.3;
-    _v.set(car.x + Math.sin(a) * 15, car.y + 5.5, car.z + Math.cos(a) * 15);
-    _l.set(car.x, car.y + 1.0, car.z);
+    const a = car.yaw + Math.PI * 0.55 + Math.sin(orbitA) * 0.85;
+    const R = state === 'menu' ? 18 : 12, H = state === 'menu' ? 8 : 5.5;
+    _v.set(car.x + Math.sin(a) * R, car.y + H, car.z + Math.cos(a) * R);
+    _l.set(car.x, car.y + 0.8, car.z);
     camYaw = car.yaw;
   } else {
     const p = CAMS[camMode], sp = car.speed;
@@ -391,7 +396,7 @@ function updateCamera(dt) {
     _l.set(car.x + sx * p.look, car.y + 0.8, car.z + sz * p.look);
   }
   if (camSnap) { camPos.copy(_v); camLook.copy(_l); camSnap = false; }
-  else { camPos.lerp(_v, damp(state === 'menu' ? 2.5 : 6, dt)); camLook.lerp(_l, damp(10, dt)); }
+  else { camPos.lerp(_v, damp(orbit ? 2 : 6, dt)); camLook.lerp(_l, damp(orbit ? 4 : 10, dt)); }
   const gy = stage.height(camPos.x, camPos.z) + 1.6;
   if (camPos.y < gy) camPos.y = gy;
   camera.position.copy(camPos);
