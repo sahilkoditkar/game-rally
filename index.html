@@ -49,7 +49,7 @@
     <div class="menu-panel">
       <header class="brand">
         <div class="logo"><span class="logo-slash"></span><span class="logo-word">DUSTLINE</span></div>
-        <div class="tagline">a pocket rally &mdash; three stages, one clock</div>
+        <div class="tagline">a pocket rally &mdash; one car, one clock</div>
       </header>
 
       <div class="mode-row">
@@ -61,8 +61,11 @@
       </div>
 
       <section class="menu-sec">
-        <div class="sec-head"><h2>Stage</h2><span class="sec-hint kbd-only">&larr; &rarr; to choose</span></div>
+        <div class="sec-head"><h2>Stage</h2><span class="sec-hint kbd-only">&larr; &rarr; stage &middot; &uarr; &darr; region</span></div>
+        <div class="tabs" id="regionTabs" role="tablist" aria-label="Regions"></div>
+        <div class="region-blurb" id="regionBlurb"></div>
         <div class="cards" id="cards"></div>
+        <div class="daily-slot" id="dailySlot"></div>
       </section>
 
       <section class="menu-sec">
@@ -70,11 +73,6 @@
         <div class="paint-row"><span class="pl-label">P1</span><div class="paints" id="paints"></div></div>
         <div class="paint-row p2-only"><span class="pl-label">P2</span><div class="paints" id="paints2"></div></div>
       </section>
-
-      <div class="menu-actions">
-        <button class="btn primary big" id="startBtn">START<span class="btn-key">Enter</span></button>
-        <button class="btn ghost" id="muteBtn" aria-pressed="false">Sound on</button>
-      </div>
 
       <div class="legend legend-keys">
         <span><kbd>&uarr;</kbd>/<kbd>W</kbd> gas</span>
@@ -107,6 +105,11 @@
         <span>&#9664; &#9654; steer on the left</span>
         <span>GAS / BRAKE on the right</span>
         <span>HAND for hairpins</span>
+      </div>
+      <!-- sticky to the bottom of the scrolling panel, so START is always reachable -->
+      <div class="menu-actions">
+        <button class="btn primary big" id="startBtn">START<span class="btn-key">Enter</span></button>
+        <button class="btn ghost" id="muteBtn" aria-pressed="false">Sound on</button>
       </div>
     </div>
   </div>
