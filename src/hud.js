@@ -13,7 +13,7 @@ const PANE_HTML = `
   <div class="hud-tl">
     <div class="hud-stage"><b class="pl-tag"></b><span class="st-name"></span><span class="st-cond"></span></div>
     <div class="hud-time">0:00.000</div>
-    <div class="hud-sub"><span class="hud-rally"></span><span class="hud-target"></span></div>
+    <div class="hud-sub"><span class="hud-rally"></span><span class="hud-ghost"></span><span class="hud-target"></span></div>
     <div class="hud-gap"></div>
     <div class="hud-split"></div>
   </div>
@@ -38,10 +38,10 @@ export function createPane(i, parent) {
   parent.appendChild(el);
   const q = (s) => el.querySelector(s);
   return {
-    el, target: q('.hud-target'), rally: q('.hud-rally'), tag: q('.pl-tag'), stage: q('.st-name'), cond: q('.st-cond'), time: q('.hud-time'), gap: q('.hud-gap'), split: q('.hud-split'),
+    el, ghost: q('.hud-ghost'), target: q('.hud-target'), rally: q('.hud-rally'), tag: q('.pl-tag'), stage: q('.st-name'), cond: q('.st-cond'), time: q('.hud-time'), gap: q('.hud-gap'), split: q('.hud-split'),
     fill: q('.prog-fill'), ticks: q('.prog-ticks'), cars: q('.prog-cars'), speed: q('.spd'), gear: q('.gear'), rpm: q('.rpm-fill'),
     msg: q('.pane-msg'), msgK: q('.pm-kicker'), msgT: q('.pm-time'), msgW: q('.pm-wait'), notice: q('.notice'),
-    last: '', gapTxt: '', tgtTxt: '', rallyTxt: '', markers: [],
+    last: '', gapTxt: '', tgtTxt: '', rallyTxt: '', ghostTxt: '', markers: [],
   };
 }
 
@@ -76,7 +76,8 @@ export function preparePanes(racers, stage, cond, opts = {}) {
 
 const progressOf = (p, stage) => clamp((p.car.idx - stage.startIdx) / (stage.finishIdx - stage.startIdx), 0, 1);
 // rally: { n, of, totals: [p0, p1] } or null
-export function updatePanes(racers, stage, state, rally) {
+// ghostDelta: undefined = no ghost; null = ghost but no comparable point yet; number = player minus ghost (s)
+export function updatePanes(racers, stage, state, rally, ghostDelta) {
   const duel = racers.length === 2;
   for (const p of racers) {
     const u = p.ui, car = p.car;
@@ -88,6 +89,8 @@ export function updatePanes(racers, stage, state, rally) {
     u.fill.style.width = (progressOf(p, stage) * 100).toFixed(2) + '%';
     racers.forEach((q, k) => { if (u.markers[k]) u.markers[k].style.left = (progressOf(q, stage) * 100).toFixed(2) + '%'; });
     // next medal still in reach, switching down as the clock passes each target
+    const gd = ghostDelta === undefined || p.i ? '' : `<b>GHOST</b> <span class="${ghostDelta == null ? 'd-none' : deltaClass(ghostDelta)}">${ghostDelta == null ? '\u2014' : (ghostDelta < 0 ? '\u2212' : '+') + Math.abs(ghostDelta).toFixed(2)}</span>`;
+    if (gd !== u.ghostTxt) { u.ghost.innerHTML = gd; u.ghostTxt = gd; u.ghost.classList.toggle('show', !!gd); }
     const nt = !p.done && state !== 'finish' ? nextTarget(p.targets, p.time) : null;
     const tg = nt ? `${medalIcon(nt.id, 'sm')}<b>${nt.name}</b> ${fmtShort(nt.t)}` : '';
     if (tg !== u.tgtTxt) { u.target.innerHTML = tg; u.tgtTxt = tg; u.target.classList.toggle('show', !!tg); }
@@ -133,7 +136,7 @@ export function renderFinish(def, run, nextName) {
   $('finStage').textContent = def.name + ' · complete';
   $('finTime').textContent = fmt(t);
   $('finBest').innerHTML = isBest
-    ? `<span class="newbest">NEW BEST</span>${prev ? ` &nbsp;${fmtDelta(t - prev.t)} on ${fmt(prev.t)}` : ''}`
+    ? `<span class="newbest">NEW BEST</span>${prev ? ` &nbsp;${fmtDelta(t - prev.t)} on ${fmt(prev.t)}` : ''}${run.ghostSaved ? ' <span class="ghost-saved">ghost saved</span>' : ''}`
     : `Best ${fmt(prev.t)} &nbsp;<span style="color:var(--bad)">${fmtDelta(t - prev.t)}</span>`;
   const rows = [['Split 1', s[0], prev && prev.s ? prev.s[0] : null], ['Split 2', s[1], prev && prev.s ? prev.s[1] : null], ['Finish', t, prev ? prev.t : null]];
   $('finSplits').innerHTML = rows.map(([n, v, b]) => {

@@ -13,6 +13,8 @@ import { Player, CAMS, paintKey, updateCamera, aimSun } from './player.js';
 import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults, renderRallyStage, renderRallyResults } from './hud.js';
 import { renderMenu, renderMute, getViewRegion } from './menu.js';
 import { medalTimes, medalFor, medalRank, medalUp, rallyStages, rallyPar, parOf, trophyFor, getRallyBest, setRallyBest, medalSummary } from './progress.js';
+import { GhostRecorder, GhostPlayer, loadGhost, saveGhost, pruneDailyGhosts, GHOST_ON_KEY } from './ghost.js';
+import { pose } from './player.js';
 import { keys, HOLD, readInput, pollPads, connectedPads, bindKeyboard, bindTouch } from './input.js';
 
 const FIXED = 1 / 120;
@@ -80,6 +82,18 @@ let cdT = 0, cdShown = null, finishT = 0, lastRun = null, hintsT = 0;
 let cond = { night: false, rain: false, sun: 1, ambient: 1 };
 // championship: { region, ids, idx, phase: 'stage' | 'inter' | 'final', totals: [p0, p1], times: [[], []], medals: [[], []], newMedals: [[], []] }
 let rally = null;
+// ghost of the best run (solo only): recorded every run, saved on a new stage best, replayed on the next
+let ghostOn = params.get('ghost') === '0' ? false : store.get(GHOST_ON_KEY, true) !== false;
+const recorder = new GhostRecorder();
+let ghost = null, ghostT = 0, ghostDelta = null, ghostDeltaT = 0;
+function clearGhost() { if (ghost) { ghost.dispose(); ghost = null; } ghostDelta = null; }
+function spawnGhost(def) {
+  clearGhost();
+  if (!ghostOn || racers.length !== 1) return;
+  const rec = loadGhost(def.id);
+  if (!rec) return;
+  try { ghost = new GhostPlayer(rec, scene); } catch { ghost = null; }
+}
 
 // split-screen needs two sets of controls: a keyboard, or two gamepads
 const duelAvailable = () => !isTouch || hasFinePointer || connectedPads().length >= 2;
@@ -211,6 +225,8 @@ function startStage(key) {
       p.place(stage, stage.startIdx, racers.length === 2 ? (k === 0 ? 1.6 : -1.6) : 0); // P1 on the left, P2 on the right
     });
     preparePanes(racers, stage, cond, { targets: racers.length === 1 ? medalTimes(def) : null });
+    recorder.reset(); ghostT = 0; ghostDeltaT = 0;
+    spawnGhost(def);
     dust.clear();
     state = 'countdown'; paused = false;
     cdT = -0.5; cdShown = null; finishT = 0; hintsT = 0;
@@ -222,6 +238,7 @@ function startStage(key) {
 function toMenu() {
   paused = false;
   rally = null;
+  clearGhost();
   state = 'menu';
   racers = [players[0]];
   $('countdown').textContent = '';
@@ -291,7 +308,12 @@ function playerFinish(p) {
     // medals are derived from the best time, so an upgrade is "this run's medal beats the old best's medal"
     const prevMedal = prev ? medalFor(stage.def, prev.t) : null, medal = medalFor(stage.def, t);
     const newMedal = medalRank(medal) > medalRank(prevMedal);
-    lastRun = { t, s, prev, isBest, medal, newMedal, up: medalUp(stage.def, t, medal) };
+    lastRun = { t, s, prev, isBest, medal, newMedal, up: medalUp(stage.def, t, medal), ghostSaved: false };
+    recorder.sample(t, p.car, true);
+    if (isBest) {
+      const rec = recorder.build({ carId: p.car.carId || 'rook', paint: p.paint.hex, time: t, splits: s });
+      if (rec) lastRun.ghostSaved = saveGhost(id, rec) > 0;
+    }
     renderFinish(stage.def, lastRun, nextName);
   } else paneFinished(racers);
   if (racers.every((q) => q.done)) {
@@ -354,6 +376,12 @@ function onAction(a, who = 0) {
     muted = !muted; for (const s of allSounds()) s.setMuted(muted);
     store.set('dustline.muted', muted); renderMute(muted); return;
   }
+  if (a === 'ghost') {
+    ghostOn = !ghostOn; store.set(GHOST_ON_KEY, ghostOn); renderGhostBtn();
+    if (ghost) ghost.setVisible(ghostOn);
+    if (state !== 'menu' && racers.length === 1) showNotice(racers[0], ghostOn ? 'GHOST ON' : 'GHOST OFF', 0.9, 'alt');
+    return;
+  }
   if (a === 'camera') {
     const p = racers[who];
     if (state !== 'menu' && p) { p.camMode = (p.camMode + 1) % CAMS.length; showNotice(p, CAMS[p.camMode].name + ' CAM', 0.9, 'alt'); }
@@ -383,7 +411,7 @@ function onAction(a, who = 0) {
   }
 }
 
-const KEYMAP = { KeyM: 'mute', KeyC: 'camera', Escape: 'pause', KeyP: 'pause', KeyR: 'reset', KeyN: 'next', Enter: 'confirm', NumpadEnter: 'confirm' };
+const KEYMAP = { KeyM: 'mute', KeyG: 'ghost', KeyC: 'camera', Escape: 'pause', KeyP: 'pause', KeyR: 'reset', KeyN: 'next', Enter: 'confirm', NumpadEnter: 'confirm' };
 const MENUKEYS = {
   ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
   ArrowUp: 'up', KeyQ: 'up', ArrowDown: 'down', KeyE: 'down', Space: 'confirm', Digit1: 'solo', Digit2: 'duel', KeyT: 'rally',
@@ -414,6 +442,12 @@ document.addEventListener('click', (e) => { const b = e.target.closest && e.targ
 
 $('startBtn').addEventListener('click', () => onAction('confirm'));
 $('muteBtn').addEventListener('click', () => onAction('mute'));
+$('ghostBtn').addEventListener('click', () => onAction('ghost'));
+function renderGhostBtn() {
+  const b = $('ghostBtn');
+  b.textContent = ghostOn ? 'Ghost on' : 'Ghost off';
+  b.setAttribute('aria-pressed', String(ghostOn));
+}
 $('pauseBtn').addEventListener('click', () => onAction('pause'));
 $('resumeBtn').addEventListener('click', () => setPaused(false));
 $('restartBtn').addEventListener('click', () => startStage(stage.def.id));
@@ -480,7 +514,7 @@ function updateCountdown(dt) {
   if (n != null) el.classList.add('pop');
   if (n === 'GO') {
     beepAll(880, 0.35);
-    state = 'race'; hintsT = 0;
+    state = 'race'; hintsT = 0; ghostT = 0;
     for (const p of racers) p.time = 0;
     setTimeout(() => { if (cdShown === 'GO') el.textContent = ''; }, 700);
     setScreen();
@@ -533,6 +567,9 @@ function frame(now) {
       p.car.updateVisual(dt);
       dust.emitFrom(p.car, p.carry, dt);
     }
+    // ghost: record the solo run, replay the stored best on the race clock
+    if (racers.length === 1 && state === 'race' && !racers[0].done) recorder.sample(racers[0].time, racers[0].car);
+    if (state === 'race' || state === 'finish') ghostT += dt;
     dust.step(dt);
     rain.step(dt);
   } else acc = 0;
@@ -545,8 +582,21 @@ function frame(now) {
     }
     updateCamera(p, dt, stage, state === 'menu' ? 'menu' : p.done && p.doneT > 1.1 ? 'finish' : null);
   });
+  if (ghost) {
+    const me = racers[0];
+    ghost.place(ghostT, pose(me.car));
+    ghost.setVisible(ghostOn);
+    // live delta at the player's track position, ~5x per second
+    ghostDeltaT -= dt;
+    if (ghostDeltaT <= 0 && state === 'race' && !me.done) {
+      ghostDeltaT = 0.2;
+      const gt = ghost.timeAtIdx(me.car.idx);
+      ghostDelta = gt == null || me.car.idx <= stage.startIdx ? null : me.time - gt;
+    }
+  }
   if (state !== 'menu' && state !== 'boot') {
-    updatePanes(racers, stage, state, rally ? { n: rally.idx + 1, of: rally.ids.length, totals: rally.base } : null); // base = totals before this stage, so the HUD never double counts
+    updatePanes(racers, stage, state, rally ? { n: rally.idx + 1, of: rally.ids.length, totals: rally.base } : null, // base = totals before this stage, so the HUD never double counts
+      ghost && ghostOn && state === 'race' ? ghostDelta : undefined);
     if (state === 'race' && !paused) hintsT += dt;
     $('hints').classList.toggle('show', state === 'race' && racers.length === 1 && hintsT < 6);
   }
@@ -575,6 +625,8 @@ window.__game = {
   startRally: (regionId) => startRally(regionId),
   get rally() { return rally ? { region: rally.region, stages: rally.ids.slice(), stage: rally.idx + 1, of: rally.ids.length, phase: rally.phase, totals: rally.totals.slice(0, racers.length), times: rally.times.slice(0, racers.length).map((a) => a.slice()) } : null; },
   medals: () => medalSummary(),
+  get ghost() { return ghost ? { time: ghost.time, carId: ghost.rec.carId, active: ghostOn && ghost.car.group.visible, delta: ghostDelta, t: ghostT } : null; },
+  get ghostOn() { return ghostOn; },
   selectStage(key) { const d = getDef(key); if (!d) return false; if (state === 'menu') select(d.id); else sel = d.id; return d.id; },
   setMode,
   get time() { return players[0].time; },
@@ -583,6 +635,8 @@ window.__game = {
 };
 
 function boot() {
+  pruneDailyGhosts();
+  renderGhostBtn();
   const ps = params.get('stage');
   const saved = store.get('dustline.stage', null);
   // ?stage= takes an id, 'daily' or a 0-based index; the saved selection may be an id, 'daily' or an old numeric index

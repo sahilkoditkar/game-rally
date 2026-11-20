@@ -18,6 +18,7 @@ nothing is loaded from the network.
 | Reset onto road | `R` | Y | RESET |
 | Camera (chase / high / top) | `C` | | |
 | Mute | `M` | | |
+| Ghost on / off | `G` | | Ghost button |
 | Pause | `Esc` | Start | ‖ button |
 | Menu: choose stage / start | `←` `→` / `Enter` | d-pad ◀ ▶ / A | tap |
 | Menu: previous / next region | `↑` `↓` or `Q` `E` | d-pad ▲ ▼ | tabs |
@@ -42,6 +43,14 @@ back on the road), and pausing offers Resume / Abandon rally. Stage times set in
 towards stage bests and medals. The final results award a rally trophy (same factors applied to the
 summed par) and keep your best total per region. Rallies also work in Duel, where the winner is
 decided on total time and no records are kept.
+
+### Ghost
+
+In solo, every run is recorded. When a run sets a new best on a stage, it is saved as that stage's ghost:
+a translucent car that replays your best run on the next attempt (rallies included), with a live
+**GHOST ±s** delta under the timer comparing you at the same point on the road. Toggle with `G` or
+the menu's Ghost button; `?ghost=0` disables it. There are no ghosts in Duel. Ghosts take about 5 KB
+per minute of driving; ghosts of past daily stages are pruned automatically.
 
 ### Duel (2 players, split screen)
 
@@ -90,6 +99,7 @@ The other modules each handle one part:
 | `player.js` | one racer: car, chase/orbit camera, viewport and timing |
 | `hud.js` | per-player HUD panes and the solo/duel results panels |
 | `menu.js` | main menu: medal points, mode toggle, region tabs and rally strip, stage and daily cards, paints |
+| `ghost.js` | ghost recording, compact storage codec, replay and the ghost-delta lookup |
 | `progress.js` | medals and medal points (derived from best times), rally pars, trophies and rally bests |
 | `input.js` | keyboard, gamepad and touch input |
 | `storage.js` | localStorage wrapper and best-time records |
