@@ -21,7 +21,27 @@ nothing is loaded from the network.
 | Pause | `Esc` | Start | ‖ button |
 | Menu: choose stage / start | `←` `→` / `Enter` | d-pad ◀ ▶ / A | tap |
 | Menu: previous / next region | `↑` `↓` or `Q` `E` | d-pad ▲ ▼ | tabs |
+| Menu: start the region's rally | `T` | | START RALLY |
 | Menu: Solo / Duel | `1` / `2` | | tap |
+
+### Medals
+
+Every stage has a par time (the reference autopilot's time). Beat **par × 1.35** for bronze,
+**par × 1.15** for silver and **par × 1.03** for gold. A stage's medal always comes from your best
+time on it. Bronze, silver and gold are worth 1, 2 and 3 medal points, so the 12 regular stages give
+a maximum of 36. The Daily Stage shows a medal but does not count towards points. The menu shows
+your points and each region's medals; the selected stage shows its three target times; during a run
+the HUD shows the best medal still in reach.
+
+### Rallies
+
+Each region is also a rally: its three stages back to back on one cumulative clock. Start one from
+the region view (**START RALLY**, or `T`). Between stages a panel shows the stage time and medal and
+your total against par; `Enter` continues. Retries are off during a rally (`R` still puts the car
+back on the road), and pausing offers Resume / Abandon rally. Stage times set in a rally count
+towards stage bests and medals. The final results award a rally trophy (same factors applied to the
+summed par) and keep your best total per region. Rallies also work in Duel, where the winner is
+decided on total time and no records are kept.
 
 ### Duel (2 players, split screen)
 
@@ -51,7 +71,7 @@ npx http-server -p 8080 -c-1     # or: python3 -m http.server 8080
 Then open <http://localhost:8080/>.
 
 Handy URL parameters: `?stage=mesa` preselects a stage (an id, `daily`, or a 0-based index into
-the stage list), `?mode=duel` preselects split-screen duel, `?start=1` skips the menu, and `?auto=1` lets
+the stage list), `?mode=duel` preselects split-screen duel, `?rally=forest&start=1` jumps straight into a region's rally, `?start=1` skips the menu, and `?auto=1` lets
 the autopilot drive the race (both cars in a duel). `?cond=night,rain` forces conditions on any
 stage, for testing.
 
@@ -69,7 +89,8 @@ The other modules each handle one part:
 | `fx.js` | dust and spray puffs, rain streaks, night headlights |
 | `player.js` | one racer: car, chase/orbit camera, viewport and timing |
 | `hud.js` | per-player HUD panes and the solo/duel results panels |
-| `menu.js` | main menu: mode toggle, region tabs, stage and daily cards, paints |
+| `menu.js` | main menu: medal points, mode toggle, region tabs and rally strip, stage and daily cards, paints |
+| `progress.js` | medals and medal points (derived from best times), rally pars, trophies and rally bests |
 | `input.js` | keyboard, gamepad and touch input |
 | `storage.js` | localStorage wrapper and best-time records |
 | `util.js` | formatting and small maths helpers |
