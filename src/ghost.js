@@ -3,6 +3,7 @@
 import { makeCar, DEFAULT_BUILD } from './carapi.js';
 import { smoothstep } from './track.js';
 import { localDateStr } from './catalog.js';
+import { storage } from './platform/index.js'; // localStorage on the web, the portal's save API elsewhere
 
 export const GHOST_HZ = 10;
 const KEY = (id) => `dustline.ghost.${id}`;
@@ -61,7 +62,7 @@ export function decodeSamples(rec) {
 // ---------------------------------------------------------------- storage
 export function loadGhost(stageId) {
   try {
-    const raw = localStorage.getItem(KEY(stageId));
+    const raw = storage.getItem(KEY(stageId));
     if (!raw) return null;
     const g = JSON.parse(raw);
     // v1: no penalties; v2: sample times are the RAW race clock, pens = [[tRaw, cumulativePenalty], ...]
@@ -72,18 +73,18 @@ export function loadGhost(stageId) {
 
 const dailyGhostKeys = () => {
   const out = [];
-  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(PREFIX + 'daily-')) out.push(k); } } catch { /* ignore */ }
+  try { for (const k of storage.keys()) if (k && k.startsWith(PREFIX + 'daily-')) out.push(k); } catch { /* ignore */ }
   return out.sort(); // dated keys sort oldest first
 };
 
 // save; on a quota error drop the oldest daily ghosts and retry, then give up silently
 export function saveGhost(stageId, rec) {
   const json = JSON.stringify(rec);
-  const tryWrite = () => { try { localStorage.setItem(KEY(stageId), json); return true; } catch { return false; } };
+  const tryWrite = () => { try { storage.setItem(KEY(stageId), json); return true; } catch { return false; } };
   if (tryWrite()) return json.length;
   for (const k of dailyGhostKeys()) {
     if (k === KEY(stageId)) continue;
-    try { localStorage.removeItem(k); } catch { /* ignore */ }
+    try { storage.removeItem(k); } catch { /* ignore */ }
     if (tryWrite()) return json.length;
   }
   return 0;
@@ -91,7 +92,7 @@ export function saveGhost(stageId, rec) {
 
 // remove ghosts of past daily stages (called on boot)
 export function pruneDailyGhosts(today = localDateStr()) {
-  for (const k of dailyGhostKeys()) if (k !== PREFIX + 'daily-' + today) { try { localStorage.removeItem(k); } catch { /* ignore */ } }
+  for (const k of dailyGhostKeys()) if (k !== PREFIX + 'daily-' + today) { try { storage.removeItem(k); } catch { /* ignore */ } }
 }
 
 // ---------------------------------------------------------------- recording

@@ -1,7 +1,9 @@
-// localStorage wrapper (every access may throw in private modes) and best-time records.
+// Saved-data wrapper (every access may throw in private modes) and best-time records.
+// Saves go through the platform storage facade: localStorage on the web, the portal's save API elsewhere.
+import { storage } from './platform/index.js';
 export const store = {
-  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode / quota */ } },
+  get(k, d) { try { const v = storage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { storage.setItem(k, JSON.stringify(v)); } catch { /* private mode / quota */ } },
 };
 
 // best record per stage id (the daily stage uses its dated id): { t: seconds, s: [split1, split2] }
