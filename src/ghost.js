@@ -1,6 +1,6 @@
 // Ghost car: record the player's rendered pose during a solo run, store the best run per stage compactly,
 // and replay it as a translucent car with a live time delta.
-import { Car } from './car.js';
+import { makeCar, DEFAULT_BUILD } from './carapi.js';
 import { smoothstep } from './track.js';
 import { localDateStr } from './catalog.js';
 
@@ -117,8 +117,9 @@ export class GhostPlayer {
   constructor(rec, scene) {
     this.rec = rec;
     this.S = decodeSamples(rec.samples);
-    this.car = new Car(rec.carId);
-    this.car.setPaint(rec.paint || '#ffffff');
+    // new records carry the recording build; older ones (carId only) replay as the default build in their paint
+    this.car = makeCar(rec.build ? rec.build : { ...DEFAULT_BUILD, paint: rec.paint || DEFAULT_BUILD.paint });
+    if (!rec.build && rec.paint) this.car.setPaint(rec.paint);
     if (this.car.setGhost) this.car.setGhost(true);
     this.car.group.traverse((o) => { o.castShadow = false; o.receiveShadow = false; });
     this.scene = scene;

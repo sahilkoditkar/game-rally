@@ -4,19 +4,22 @@ import * as T from './track.js';
 import { store, getBest } from './storage.js';
 import { STAGES, REGIONS, getDef } from './catalog.js';
 
+// ACE sits above gold; its factor is provisional (one constant, tuned with the car agent)
+export const ACE_FACTOR = 0.95;
 // best first; a time earns a medal when it is <= par * factor
 export const MEDALS = [
+  { id: 'ace', name: 'Ace', factor: ACE_FACTOR, points: 4, color: '#39c5cf' },
   { id: 'gold', name: 'Gold', factor: 1.03, points: 3, color: '#f2b632' },
   { id: 'silver', name: 'Silver', factor: 1.15, points: 2, color: '#c9ced6' },
   { id: 'bronze', name: 'Bronze', factor: 1.35, points: 1, color: '#c0793f' },
 ];
 export const MEDAL = Object.fromEntries(MEDALS.map((m) => [m.id, m]));
-const RANK = { gold: 3, silver: 2, bronze: 1 };
+const RANK = { ace: 4, gold: 3, silver: 2, bronze: 1 };
 export const medalRank = (id) => RANK[id] || 0;
 
 // the 12 regular stages count towards points; the daily stage shows a medal but does not count
 const REGULAR = REGIONS.flatMap((r) => r.stages);
-export const MAX_POINTS = REGULAR.length * 3;
+export const MAX_POINTS = REGULAR.length * MEDALS[0].points;
 
 const parCache = new Map();
 export function parOf(def) {
@@ -30,12 +33,12 @@ export function parOf(def) {
   return p;
 }
 
-const thresholds = (par) => (par ? { gold: par * MEDAL.gold.factor, silver: par * MEDAL.silver.factor, bronze: par * MEDAL.bronze.factor } : null);
+const thresholds = (par) => (par ? Object.fromEntries(MEDALS.map((m) => [m.id, par * m.factor])) : null);
 
-// { gold, silver, bronze } target times in seconds, or null when the stage has no par
+// { ace, gold, silver, bronze } target times in seconds, or null when the stage has no par
 export function medalTimes(def) { return thresholds(parOf(def)); }
 
-// 'gold' | 'silver' | 'bronze' | null
+// 'ace' | 'gold' | 'silver' | 'bronze' | null
 export function medalFor(def, t) {
   const m = medalTimes(def);
   if (!m || !(t > 0)) return null;

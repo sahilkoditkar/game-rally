@@ -136,9 +136,13 @@ function glowTexture() {
   return glowTex;
 }
 // warm spot lights + glow sprites parented to the car group (local +Z is forward, Y up, ground at 0)
+// lights stat of the stock build (from car.js when it provides buildStats); stock == today's lamps
+export let STOCK_LIGHTS = 0.5;
+export const setStockLights = (v) => { if (typeof v === 'number' && v > 0) STOCK_LIGHTS = v; };
 export class Headlights {
-  // lamp, pod and tail positions come from the car's own model bounds (works for any car in the roster)
-  constructor(car) {
+  // lamp and tail positions come from the car's own model bounds; `lights` (buildStats().lights, 0..1) scales
+  // reach and brightness relative to the stock car, so a stock build looks exactly as before
+  constructor(car, lights = STOCK_LIGHTS) {
     this.group = new THREE.Group();
     this.group.visible = false;
     car.group.updateMatrixWorld(true);
@@ -150,10 +154,12 @@ export class Headlights {
     const warm = 0xffe2b0;
     // mounted a little above the roof with no distance falloff (decay 0, soft cutoff at 72 m): real lamp height
     // would leave the far road black and burn a hotspot right at the bumper
+    const k = Math.max(-0.5, (lights ?? STOCK_LIGHTS) - STOCK_LIGHTS);
+    this.reach = 72 * (1 + 1.1 * k);
     for (const sx of [-1, 1]) {
-      const s = new THREE.SpotLight(warm, 5, 72, 0.5, 0.7, 0);
+      const s = new THREE.SpotLight(warm, 5 * (1 + 2.6 * k), this.reach, Math.min(0.8, 0.5 * (1 + 0.6 * k)), 0.7, 0);
       s.position.set(sx * 0.5, top + 0.8, front - 1.4);
-      s.target.position.set(sx * 1.6, 0, front + 24);
+      s.target.position.set(sx * 1.6 * (1 + 1.2 * k), 0, front + 24 * (1 + 0.6 * k));
       s.castShadow = false;
       this.group.add(s, s.target);
     }

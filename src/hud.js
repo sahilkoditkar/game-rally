@@ -6,7 +6,9 @@ import { MEDAL, MEDALS, nextTarget, medalRank } from './progress.js';
 // short clock for targets: m:ss.s
 export const fmtShort = (t) => (t >= 0 ? `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}` : '-:--.-');
 // medal badge (inline SVG); id null draws an empty outline
-export const medalIcon = (id, cls = '') => `<span class="medal ${id || 'none'} ${cls}" title="${id ? MEDAL[id].name : 'No medal yet'}"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.2"/><path d="M10 5.2l1.4 2.9 3.2.45-2.3 2.25.55 3.2L10 12.5l-2.85 1.5.55-3.2-2.3-2.25 3.2-.45z"/></svg></span>`;
+// the Ace is a star inside an open ring, so it reads differently from the round medals, not just by colour
+const ACE_SVG = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle class="ring" cx="10" cy="10" r="8.4"/><path class="star" d="M10 2.6l2.1 4.8 5.2.5-3.9 3.5 1.1 5.1L10 13.9l-4.5 2.6 1.1-5.1-3.9-3.5 5.2-.5z"/></svg>';
+export const medalIcon = (id, cls = '') => `<span class="medal ${id || 'none'} ${cls}" title="${id ? MEDAL[id].name : 'No medal yet'}">${id === 'ace' ? ACE_SVG : '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.2"/><path d="M10 5.2l1.4 2.9 3.2.45-2.3 2.25.55 3.2L10 12.5l-2.85 1.5.55-3.2-2.3-2.25 3.2-.45z"/></svg>'}</span>`;
 export const targetsHtml = (times) => (times ? MEDALS.map((m) => `<span class="tgt">${medalIcon(m.id, 'sm')}${fmtShort(times[m.id])}</span>`).join('') : '');
 
 const PANE_HTML = `
@@ -137,7 +139,7 @@ export function renderFinish(def, run, nextName) {
   $('finTime').textContent = fmt(t);
   $('finBest').innerHTML = isBest
     ? `<span class="newbest">NEW BEST</span>${prev ? ` &nbsp;${fmtDelta(t - prev.t)} on ${fmt(prev.t)}` : ''}${run.ghostSaved ? ' <span class="ghost-saved">ghost saved</span>' : ''}`
-    : `Best ${fmt(prev.t)}${run.prevCar ? ` <span class="best-car">${esc(run.prevCar.name)}</span>` : ''} &nbsp;<span style="color:var(--bad)">${fmtDelta(t - prev.t)}</span>`;
+    : `Best ${fmt(prev.t)} &nbsp;<span style="color:var(--bad)">${fmtDelta(t - prev.t)}</span>`;
   const rows = [['Split 1', s[0], prev && prev.s ? prev.s[0] : null], ['Split 2', s[1], prev && prev.s ? prev.s[1] : null], ['Finish', t, prev ? prev.t : null]];
   $('finSplits').innerHTML = rows.map(([n, v, b]) => {
     const d = v != null && b != null ? v - b : null;
@@ -168,7 +170,7 @@ export function medalBlock(medal, isNew, up) {
   const head = medal
     ? `<div class="medal-big ${medal}">${medalIcon(medal)}<span class="mb-name">${MEDAL[medal].name}</span>${isNew ? '<span class="newmedal">NEW MEDAL</span>' : ''}</div>`
     : '<div class="medal-big none">' + medalIcon(null) + '<span class="mb-name">No medal</span></div>';
-  const next = up ? `<div class="medal-up">${up.gap > 0 ? `${up.gap.toFixed(3)} s to ${up.name}` : `${up.name} reached`}</div>` : (medal === 'gold' ? '<div class="medal-up">top medal</div>' : '');
+  const next = up ? `<div class="medal-up">${up.gap > 0 ? `${up.gap.toFixed(3)} s to ${up.name}` : `${up.name} reached`}</div>` : (medal === 'ace' ? '<div class="medal-up">top medal</div>' : '');
   return head + next;
 }
 
@@ -180,7 +182,7 @@ export function renderRallyStage(info) {
   if (solo) {
     const d = info.parTotal != null ? a.total - info.parTotal : null;
     body = `<div class="fin-time">${fmt(a.time)}</div>
-      <div class="rally-medal">${medalBlock(a.medal, a.newMedal, a.up)}</div>${info.unlockHtml || ''}
+      <div class="rally-medal">${medalBlock(a.medal, a.newMedal, a.up)}</div>${info.earnHtml || ''}
       <div class="rally-cum"><span class="lbl">Total</span> <b>${fmt(a.total)}</b>${d != null ? ` <span class="lbl">vs par ${fmt(info.parTotal)}</span> <span class="${deltaClass(d)}">${fmtDelta(d)}</span>` : ''}</div>`;
   } else {
     body = `<table class="splits duel-splits"><tr class="hd"><td></td>${info.racers.map((r) => `<td><span class="pchip" style="background:${r.hex}"></span>${r.name}</td>`).join('')}</tr>
@@ -201,7 +203,7 @@ export function renderRallyResults(info) {
     const d = info.prev ? a.total - info.prev.t : null;
     head = `<div class="fin-time">${fmt(a.total)}</div>
       <div class="fin-best">${info.isBest ? `<span class="newbest">NEW BEST</span>${info.prev ? ` &nbsp;${fmtDelta(d)} on ${fmt(info.prev.t)}` : ''}` : `Best ${fmt(info.prev.t)} &nbsp;<span style="color:var(--bad)">${fmtDelta(d)}</span>`}</div>
-      <div class="rally-medal">${trophyBlock(info.trophy)}</div>${info.unlockHtml || ''}`;
+      <div class="rally-medal">${trophyBlock(info.trophy)}</div>${info.earnHtml || ''}`;
   } else {
     const [p, q] = info.racers, gap = Math.abs(p.total - q.total), w = p.total <= q.total ? p : q;
     head = `<div class="winner" style="--pc:${gap < 0.0005 ? 'var(--mustard)' : w.hex}">${gap < 0.0005 ? '<span class="w-name">DEAD HEAT</span>' : `<span class="w-chip"></span><span class="w-name">${w.name} WINS</span>`}</div>
@@ -218,4 +220,11 @@ export function renderRallyResults(info) {
 
 export function trophyBlock(id) {
   return `<div class="medal-big trophy ${id || 'none'}"><span class="medal ${id || 'none'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v3h3v2a5 5 0 0 1-4.6 5A5 5 0 0 1 13 15.9V18h3v3H8v-3h3v-2.1A5 5 0 0 1 8.6 13 5 5 0 0 1 4 8V6h3zm-1 5c0 1.4.9 2.6 2 3V8zm12 0h-2v3c1.1-.4 2-1.6 2-3z"/></svg></span><span class="mb-name">${id ? MEDAL[id].name + ' trophy' : 'No trophy'}</span></div>`;
+}
+
+// credits earned on a run: "+ 310 CR" with its lines, and an optional nudge towards the garage
+export function earningsBlock(e, balance, hint) {
+  if (!e || !e.total) return '';
+  return `<div class="earn"><div class="earn-h"><span class="earn-t">+ ${e.total.toLocaleString('en-US')} CR</span><span class="earn-bal">balance ${Math.round(balance).toLocaleString('en-US')} CR</span></div>
+    <div class="earn-lines">${e.lines.map(([l, n]) => `<span><i>${esc(l)}</i><b>+${n}</b></span>`).join('')}</div>${hint ? `<div class="earn-hint">${hint}</div>` : ''}</div>`;
 }

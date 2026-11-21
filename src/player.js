@@ -1,9 +1,8 @@
 // A racer: car, chase camera, viewport, timing and HUD pane. Solo is one Player, duel is two.
 import * as THREE from 'three';
 import { clamp, smoothstep } from './track.js';
-import { Car, CARS, PAINTS } from './car.js';
+import { makeCar, applyBuild, normalizeBuild, buildStats, DEFAULT_BUILD, paintName } from './carapi.js';
 import { angDiff, damp } from './util.js';
-import { store } from './storage.js';
 import { createPane } from './hud.js';
 import { Headlights } from './fx.js';
 
@@ -12,18 +11,16 @@ export const CAMS = [
   { name: 'HIGH', dist: 22, h: 15, look: 8 },
   { name: 'TOP', dist: 4.5, h: 27, look: 3 },
 ];
-export const paintKey = (i) => (i ? 'dustline.paint2' : 'dustline.paint');
-export const carKey = (i) => (i ? 'dustline.car2' : 'dustline.car');
-export const carDef = (id) => CARS.find((c) => c.id === id) || null;
-
+// every player drives the Rook; a player's look/performance is a build (see carapi.js / economy.js)
 export class Player {
   constructor(i, scene, panesEl) {
     this.i = i;
     this.name = 'P' + (i + 1);
     this.scene = scene;
-    this.car = new Car();
+    this.build = normalizeBuild(DEFAULT_BUILD);
+    this.car = makeCar(this.build);
     scene.add(this.car.group);
-    this.lights = new Headlights(this.car);
+    this.lights = new Headlights(this.car, buildStats(this.build).lights);
     this.camScale = 1;
     this.cam = new THREE.PerspectiveCamera(50, 1, 0.3, 420);
     this.camPos = new THREE.Vector3(); this.camLook = new THREE.Vector3();
@@ -31,36 +28,29 @@ export class Player {
     this.view = { x: 0, y: 0, w: 1, h: 1 };
     this.carry = [0, 0];
     this.ui = createPane(i, panesEl);
-    this.setPaint(clamp(store.get(paintKey(i), i ? 1 : 0) | 0, 0, PAINTS.length - 1));
+    this.syncPaintUi();
     this.resetRun();
   }
-  get paint() { return PAINTS[this.paintIdx]; }
-  get carId() { return this.car.carId; }
-  // swap the car model + handling, keeping paint, headlight state and pose; returns true if it changed
-  setCar(id) {
-    const def = carDef(id) || CARS[0];
-    if (def.id === this.car.carId) return false;
-    const old = this.car, lightsOn = this.lights.group.visible, vis = old.group.visible;
+  get paint() { return { hex: this.build.paint, name: paintName(this.build.paint) }; }
+  get carId() { return this.car.carId || 'rook'; }
+  // show `build` on this player's car (model, handling, paint); headlights are re-fitted to the new body
+  setBuild(build) {
+    const b = normalizeBuild(build);
+    const key = JSON.stringify(b);
+    if (key === this._buildKey) return false;
+    this._buildKey = key;
+    this.build = b;
+    applyBuild(this.car, b);
+    const on = this.lights.group.visible;
     this.lights.dispose();
-    this.scene.remove(old.group);
-    old.group.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
-    });
-    this.car = new Car(def.id);
-    this.car.group.visible = vis;
-    this.scene.add(this.car.group);
-    this.lights = new Headlights(this.car);
-    this.lights.setEnabled(lightsOn);
-    // camera distance scales gently with the car's length (Rook ~4.1 m is the reference)
-    this.camScale = clamp(this.lights.lengthM / 4.1, 0.9, 1.12);
-    this.car.setPaint(this.paint.hex);
+    this.lights = new Headlights(this.car, buildStats(b).lights);
+    this.lights.setEnabled(on);
+    this.syncPaintUi();
     return true;
   }
-  setPaint(idx) {
-    this.paintIdx = idx; this.car.setPaint(this.paint.hex);
-    this.ui.tag.style.background = this.paint.hex;
-    this.ui.el.style.setProperty('--pc', this.paint.hex);
+  syncPaintUi() {
+    this.ui.tag.style.background = this.build.paint;
+    this.ui.el.style.setProperty('--pc', this.build.paint);
   }
   resetRun() { this.time = 0; this.splits = []; this.nextSplit = 0; this.done = false; this.doneT = 0; this.stuckT = 0; }
   // car.reset puts the car on the centreline; lat (+ = left) shifts it sideways along the road normal
@@ -90,11 +80,13 @@ export function updateCamera(p, dt, stage, orbitMode) {
   const cam = p.cam, phys = p.car, car = pose(phys);
   if (orbitMode) {
     // side-on orbit (never straight behind, where the dust plume trails), high enough to look over it
-    p.orbitA += dt * 0.12;
-    const a = car.yaw + Math.PI * 0.55 + Math.sin(p.orbitA) * 0.85;
-    const R = orbitMode === 'menu' ? 17 : 14, H = orbitMode === 'menu' ? 9.5 : 6.5;
+    // garage: a close, slow full turntable around the parked car
+    const garage = orbitMode === 'garage';
+    p.orbitA += dt * (garage ? 0.22 : 0.12);
+    const a = garage ? car.yaw + 0.9 + p.orbitA : car.yaw + Math.PI * 0.55 + Math.sin(p.orbitA) * 0.85;
+    const R = garage ? 9 : orbitMode === 'menu' ? 17 : 14, H = garage ? 2.9 : orbitMode === 'menu' ? 9.5 : 6.5;
     _v.set(car.x + Math.sin(a) * R, car.y + H, car.z + Math.cos(a) * R);
-    _l.set(car.x, car.y + 0.8, car.z);
+    _l.set(car.x, car.y + (garage ? 0.7 : 0.8), car.z);
     p.camYaw = car.yaw;
   } else {
     const c = CAMS[p.camMode], sp = phys.speed;
