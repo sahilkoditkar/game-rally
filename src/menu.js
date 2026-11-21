@@ -3,7 +3,8 @@ import { $, fmt, esc } from './util.js';
 import { getBest } from './storage.js';
 import { REGIONS, getDef, regionOf, lengthOf, conditions, dailyDef } from './catalog.js';
 import { condIcons, medalIcon, targetsHtml } from './hud.js';
-import { renderPicker, newCars, carById, getBestCar, lockIcon } from './garage.js';
+import { renderGarage } from './garage.js';
+import { profile, anythingAffordable } from './economy.js';
 import { medalTimes, medalFor, medalPoints, MAX_POINTS, regionMedals, rallyStages, getRallyBest, trophyFor } from './progress.js';
 
 let viewRegion = null; // region whose cards are shown (tabs only change the view, not the selection)
@@ -17,8 +18,7 @@ function meta(def) {
 }
 const targets = (def, selected) => {
   if (!selected || !medalTimes(def)) return '';
-  const bc = getBest(def.id) && getBestCar(def.id);
-  return `<span class="card-targets">${targetsHtml(medalTimes(def))}${bc ? `<span class="best-car">best in ${esc(bc.name)}</span>` : ''}</span>`;
+  return `<span class="card-targets">${targetsHtml(medalTimes(def))}</span>`;
 };
 
 function stageCard(def, n, selected) {
@@ -86,24 +86,18 @@ export function renderMenu(ctx) {
   $('stagesSec').classList.toggle('hidden', garage);
   $('menu').classList.toggle('garage-view', garage);
   for (const b of document.querySelectorAll('.view-btn')) { b.classList.toggle('sel', b.dataset.view === ctx.view); b.setAttribute('aria-selected', String(b.dataset.view === ctx.view)); }
-  $('garageNew').classList.toggle('hidden', !newCars().length);
-  if (garage) {
-    [p1, p2].forEach((p, i) => {
-      if (i === 1 && !duel) return;
-      renderPicker($('pick' + i), { player: p, carId: ctx.cars[i], allUnlocked: duel, points: pts, onCar: (d) => ctx.onCar(i, d), onPaint: (idx) => ctx.onPaint(i, idx) });
-    });
-  }
-  // footer: what you're about to drive, and why START is blocked (a locked car), if it is
-  const chip = (p, i) => { const c = carById(ctx.cars[i]); return `<span class="fs-car"><i style="background:${p.paint.hex}"></i>${duel ? `<em>${p.name}</em> ` : ''}${esc(c ? c.name : '')}</span>`; };
-  $('footSummary').innerHTML = (duel ? chip(p1, 0) + chip(p2, 1) : chip(p1, 0)) + (ctx.blocked ? `<span class="fs-block">${lockIcon} ${esc(ctx.blocked)}</span>` : `<span class="fs-stage">${esc(getDef(ctx.sel).name)}</span>`);
-  $('startBtn').disabled = !!ctx.blocked;
-  for (const b of document.querySelectorAll('.rally-btn')) b.disabled = !!ctx.blocked;
+  // a dot on the Garage tab whenever something can be bought right now
+  $('garageNew').classList.toggle('hidden', !anythingAffordable());
+  if (garage) renderGarage(ctx.garage);
+  // footer: credits, the car's paint(s) and the stage you're about to drive; START always works
+  const chip = (p) => `<span class="fs-car"><i style="background:${p.paint.hex}"></i>${duel ? `<em>${p.name}</em> ` : ''}${esc(p.paint.name)}</span>`;
+  $('footSummary').innerHTML = `<span class="fs-cr"><b>${Math.round(profile.credits).toLocaleString('en-US')}</b> CR</span>` + (duel ? chip(p1) + chip(p2) : chip(p1)) + `<span class="fs-stage">${esc(getDef(ctx.sel).name)}</span>`;
   for (const b of document.querySelectorAll('.seg-btn[data-mode]')) {
     b.classList.toggle('sel', b.dataset.mode === ctx.mode);
     b.setAttribute('aria-checked', String(b.dataset.mode === ctx.mode));
   }
   document.querySelector('.seg-btn[data-mode="duel"]').disabled = !avail;
-  $('modeNote').textContent = avail ? (duel ? 'split screen, one keyboard' : 'time trial') : 'Duel needs a keyboard or two gamepads';
+  $('modeNote').textContent = avail ? (duel ? 'split screen, one keyboard \u00b7 both cars run your build' : 'time trial') : 'Duel needs a keyboard or two gamepads';
   renderMute(ctx.muted);
   // keep the selected card in view inside the scrolling panel
   const selEl = document.querySelector('#menu .card.sel');

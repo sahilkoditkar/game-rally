@@ -62,16 +62,13 @@
         </div>
         <div class="seg view-seg" role="tablist" aria-label="Menu view">
           <button class="seg-btn view-btn" data-view="stages" role="tab">Stages</button>
-          <button class="seg-btn view-btn" data-view="garage" role="tab">Garage<span class="new-dot hidden" id="garageNew">NEW</span><span class="seg-key kbd-only">V</span></button>
+          <button class="seg-btn view-btn" data-view="garage" role="tab">Garage<span class="new-dot dot hidden" id="garageNew" title="Something affordable"></span><span class="seg-key kbd-only">V</span></button>
         </div>
       </div>
       <div class="mode-note" id="modeNote"></div>
 
-      <section class="menu-sec garage-sec hidden" id="garageSec">
-        <div class="picker" id="pick0"></div>
-        <div class="picker p2-only" id="pick1"></div>
-        <div class="duel-note p2-only">Duel is party play: all four cars are open to both players.</div>
-      </section>
+      <!-- garage: tune and style the Rook (rendered by garage.js) -->
+      <section class="menu-sec garage-sec hidden" id="garageSec"></section>
 
       <section class="menu-sec stages-sec" id="stagesSec">
         <div class="sec-head stage-head"><h2>Stage</h2><span class="sec-hint kbd-only">&larr; &rarr; stage &middot; &uarr; &darr; region</span></div>
@@ -151,7 +148,7 @@
       <div class="fin-time" id="finTime">0:00.000</div>
       <div class="fin-best" id="finBest"></div>
       <div class="fin-medal" id="finMedal"></div>
-      <div class="fin-unlock" id="finUnlock"></div>
+      <div class="fin-earn" id="finEarn"></div>
       <table class="splits" id="finSplits"></table>
       <div class="panel-btns">
         <button class="btn primary" id="retryBtn">Retry<span class="btn-key">R</span></button>

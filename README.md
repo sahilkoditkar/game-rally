@@ -29,10 +29,9 @@ nothing is loaded from the network.
 ### Medals
 
 Every stage has a par time (the reference autopilot's time). Beat **par × 1.35** for bronze,
-**par × 1.15** for silver and **par × 1.03** for gold. A stage's medal always comes from your best
-time on it. Bronze, silver and gold are worth 1, 2 and 3 medal points, so the 12 regular stages give
-a maximum of 36. The Daily Stage shows a medal but does not count towards points. The menu shows
-your points and each region's medals; the selected stage shows its three target times; during a run
+**par × 1.15** for silver, **par × 1.03** for gold and **par × 0.95** for the teal star-in-ring **Ace**. A stage's medal always comes from your best
+time on it. Bronze, silver, gold and ace are worth 1, 2, 3 and 4 medal points (maximum 48). The Daily Stage shows a medal but does not count towards points. The menu shows
+your points and each region's medals; the selected stage shows its four target times; during a run
 the HUD shows the best medal still in reach.
 
 ### Rallies
@@ -45,23 +44,34 @@ towards stage bests and medals. The final results award a rally trophy (same fac
 summed par) and keep your best total per region. Rallies also work in Duel, where the winner is
 decided on total time and no records are kept.
 
-### Garage
+### Garage: build your Rook
 
-The menu has two views: **Stages** and **Garage** (`V`, or the tabs); START stays pinned at the bottom
-of both. The Garage shows four cars with their speed, acceleration, grip and drift, plus paint:
+There is one car, the Rook R7, and you make it your own with credits. Every finished solo stage
+pays out. The numbers live in one table (`EARN` in `src/economy.js`):
 
-| Car | Character | Unlocks at |
-| --- | --- | --- |
-| Rook R7 | the all-rounder | from the start |
-| Pip 66 | tiny, grippy, forgiving | 6 medal points |
-| Halvard Longtail | long, fast, loose rear end | 14 medal points |
-| Grendel S | huge pace and grip, bites past the limit | 24 medal points |
+| Earned for | Credits |
+| --- | --- |
+| Finishing a stage | 100 + 12 per km |
+| Medal of the run | bronze 35 / silver 65 / gold 120 / ace 200 |
+| Each medal tier reached on a stage for the first time | 60 |
+| Beating your personal best | 50 |
+| First finish of today's Daily Stage | 120 |
+| Completing a rally (+200 for a gold or ace trophy) | 250 |
 
-Locked cars can be previewed (the menu background shows the selected car), but START stays disabled
-until you have the points. When a result crosses a threshold, the finish panel announces the new car
-and the Garage marks it NEW. In the Garage, `←` `→` change car and `↑` `↓` change paint (in Duel they
-change Player 2's car). Duel is party play: all four cars are open to both players. Stage best times
-are kept per stage across all cars, together with the car that set them.
+Duel and abandoned runs earn nothing. The finish panel itemises every payout.
+
+Open the **Garage** (`V`) to spend them:
+
+- **Tune** has four upgrade lines (Engine, Tyres, Brakes, Suspension), each with three levels at 400 / 900 / 1,600 CR.
+  Higher levels also need 8 and 18 medal points. The stat bars preview what the highlighted upgrade adds.
+- **Style** covers paint, accent colour, livery, wheels, wing, roof, lamps, front, arches, mud flaps and number.
+  Hovering or focusing an item shows it on the car; leaving reverts. Owned items fit instantly.
+  Locked items say why ("needs 12 medal points", "needs Tyres: Rally compound", "120 CR short").
+
+Purchases of 900 CR and up need a second press to confirm. In the Garage, `↑` `↓` choose a row,
+`←` `→` choose an option, `Space` buys or fits it, and `Q` / `E` switch Tune and Style. `Enter` still starts the race.
+The Garage tab shows a dot when something is affordable. In Duel both cars use your build (same
+performance and parts); Player 2 picks their own paint and accent from the colours you own.
 
 ### Ghost
 
@@ -99,7 +109,7 @@ npx http-server -p 8080 -c-1     # or: python3 -m http.server 8080
 Then open <http://localhost:8080/>.
 
 Handy URL parameters: `?stage=mesa` preselects a stage (an id, `daily`, or a 0-based index into
-the stage list), `?mode=duel` preselects split-screen duel, `?rally=forest&start=1` jumps straight into a region's rally, `?car=pip` / `?car2=grendel` pick cars (even locked ones, for testing), `?start=1` skips the menu, and `?auto=1` lets
+the stage list), `?mode=duel` preselects split-screen duel, `?rally=forest&start=1` jumps straight into a region's rally, `?build=max|stock|<json>` and `?credits=N` try builds without touching your saved profile, `?start=1` skips the menu, and `?auto=1` lets
 the autopilot drive the race (both cars in a duel). `?cond=night,rain` forces conditions on any
 stage, for testing.
 
@@ -118,7 +128,9 @@ The other modules each handle one part:
 | `player.js` | one racer: car, chase/orbit camera, viewport and timing |
 | `hud.js` | per-player HUD panes and the solo/duel results panels |
 | `menu.js` | main menu: medal points, mode toggle, region tabs and rally strip, stage and daily cards, paints |
-| `garage.js` | car unlocks, NEW tags, which car set each best, car pickers |
+| `carapi.js` | the Rook's build API (upgrades, parts, paints) from car.js, with fallbacks |
+| `economy.js` | credits, the earn table, the saved profile and purchases |
+| `garage.js` | the Garage view: Tune and Style, previews, buying |
 | `ghost.js` | ghost recording, compact storage codec, replay and the ghost-delta lookup |
 | `progress.js` | medals and medal points (derived from best times), rally pars, trophies and rally bests |
 | `input.js` | keyboard, gamepad and touch input |
