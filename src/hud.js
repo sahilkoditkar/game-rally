@@ -21,6 +21,7 @@ const PANE_HTML = `
   </div>
   <div class="hud-progress"><span class="hud-rallypill"></span><div class="prog"><div class="prog-fill"></div><div class="prog-ticks"></div><div class="prog-cars"></div></div><span class="hud-gates"></span></div>
   <div class="hud-offroad">OFF ROAD</div>
+  <div class="hud-notes" aria-hidden="true"></div>
   <div class="hud-br">
     <div class="speed"><span class="spd">0</span><small>km/h</small></div>
     <div class="gearrow"><span class="gear">1</span><div class="rpm"><div class="rpm-fill"></div></div></div>
@@ -41,7 +42,7 @@ export function createPane(i, parent) {
   parent.appendChild(el);
   const q = (s) => el.querySelector(s);
   return {
-    el, pen: q('.hud-pen'), gates: q('.hud-gates'), rough: q('.hud-offroad'), ghost: q('.hud-ghost'), target: q('.hud-target'), rally: q('.hud-rallypill'), stageTag: q('.hud-stage'), tag: q('.pl-tag'), stage: q('.st-name'), cond: q('.st-cond'), time: q('.hud-time'), gap: q('.hud-gap'), split: q('.hud-split'),
+    el, notes: q('.hud-notes'), pen: q('.hud-pen'), gates: q('.hud-gates'), rough: q('.hud-offroad'), ghost: q('.hud-ghost'), target: q('.hud-target'), rally: q('.hud-rallypill'), stageTag: q('.hud-stage'), tag: q('.pl-tag'), stage: q('.st-name'), cond: q('.st-cond'), time: q('.hud-time'), gap: q('.hud-gap'), split: q('.hud-split'),
     fill: q('.prog-fill'), ticks: q('.prog-ticks'), cars: q('.prog-cars'), speed: q('.spd'), gear: q('.gear'), rpm: q('.rpm-fill'),
     msg: q('.pane-msg'), msgK: q('.pm-kicker'), msgT: q('.pm-time'), msgW: q('.pm-wait'), notice: q('.notice'),
     last: '', penTxt: '', penN: 0, gatesTxt: '', gapTxt: '', tgtTxt: '', rallyTxt: '', ghostTxt: '', markers: [],

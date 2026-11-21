@@ -5,7 +5,7 @@ import { $ } from './util.js';
 
 const CTL_TABS = [['keyboard', 'Keyboard'], ['gamepad', 'Gamepad'], ['touch', 'Touch']];
 const S = { open: false, focus: 0, ctl: 'keyboard', ctx: null, opener: null };
-// ctx: { muted(), ghostOn(), defaultCtl(), onMute(), onGhost(), onClose() }
+// ctx: { muted(), ghostOn(), notesOn(), defaultCtl(), onMute(), onGhost(), onNotes(), onClose() }
 
 const k = (...xs) => xs.map((x) => `<kbd>${x}</kbd>`).join('');
 const table = (rows, head) => `<table class="ctl-table">${head ? `<tr class="hd">${head.map((h) => `<td>${h}</td>`).join('')}</tr>` : ''}${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</table>`;
@@ -37,6 +37,7 @@ export function renderSettings() {
   $('setRows').innerHTML = `
     <div class="set-row" data-nav data-row="sound"><span class="set-l">Sound</span>${seg2('sound', sound)}<kbd class="set-k">M</kbd></div>
     <div class="set-row" data-nav data-row="ghost"><span class="set-l">Ghost<small>Race your saved best run (solo only)</small></span>${seg2('ghost', ghost)}<kbd class="set-k">G</kbd></div>
+    <div class="set-row" data-nav data-row="notes"><span class="set-l">Pace notes<small>Corner calls ahead of each bend</small></span>${seg2('notes', c.notesOn())}<span></span></div>
     <div class="set-ctl" data-nav data-row="controls">
       <div class="set-ctl-head"><span class="set-l">Controls</span><div class="seg ctl-tabs" role="tablist">${CTL_TABS.map(([id, n]) => `<button class="seg-btn${S.ctl === id ? ' sel' : ''}" data-ctl="${id}" role="tab" aria-selected="${S.ctl === id}">${n}</button>`).join('')}</div></div>
       <div class="ctl-body">${CONTROLS[S.ctl]()}</div>
@@ -49,6 +50,7 @@ function setRow(row, on) {
   const c = S.ctx;
   if (row === 'sound' && on === c.muted()) c.onMute();
   if (row === 'ghost' && on !== c.ghostOn()) c.onGhost();
+  if (row === 'notes' && on !== c.notesOn()) c.onNotes();
   renderSettings();
 }
 function markFocus() {
@@ -81,6 +83,7 @@ export function settingsKey(a) {
   if (a === 'left' || a === 'right' || a === 'activate') {
     if (row === 'sound') setRow('sound', S.ctx.muted());
     else if (row === 'ghost') setRow('ghost', !S.ctx.ghostOn());
+    else if (row === 'notes') setRow('notes', !S.ctx.notesOn());
     else if (row === 'controls') stepCtl(a === 'left' ? -1 : 1);
     else if (row === 'done' && a === 'activate') closeSettings();
   }
