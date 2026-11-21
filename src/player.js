@@ -99,7 +99,9 @@ export function updateCamera(p, dt, stage, orbitMode) {
     }
     const target = Math.atan2(fx, fz);
     p.camYaw = p.camSnap ? target : p.camYaw + angDiff(target, p.camYaw) * damp(3.2, dt);
-    const sk = clamp(sp / 40, 0, 1), cs = p.camScale || 1, dist = c.dist * cs * (1 + sk * (c.pullBack ?? 0.2)), h = c.h * cs * (1 + sk * 0.06);
+    const sk = clamp(sp / 40, 0, 1), cs = p.camScale || 1, h = c.h * cs * (1 + sk * 0.06);
+    // reversing towards a close camera: back off with reverse speed so the smoothing lag can't crop the car
+    const dist = c.dist * cs * (1 + sk * (c.pullBack ?? 0.2)) + (c.action ? Math.max(0, -(phys.vf ?? 0)) * 0.35 : 0);
     const sx = Math.sin(p.camYaw), sz = Math.cos(p.camYaw);
     // the low cam follows a smoothed copy of the car's rendered height, so crests and jumps don't pogo it
     if (p.camSnap || p.camCarY == null) p.camCarY = car.y;
