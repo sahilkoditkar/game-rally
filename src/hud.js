@@ -11,17 +11,16 @@ const ACE_SVG = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle class="ring
 export const medalIcon = (id, cls = '') => `<span class="medal ${id || 'none'} ${cls}" title="${id ? MEDAL[id].name : 'No medal yet'}">${id === 'ace' ? ACE_SVG : '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.2"/><path d="M10 5.2l1.4 2.9 3.2.45-2.3 2.25.55 3.2L10 12.5l-2.85 1.5.55-3.2-2.3-2.25 3.2-.45z"/></svg>'}</span>`;
 export const targetsHtml = (times) => (times ? MEDALS.map((m) => `<span class="tgt">${medalIcon(m.id, 'sm')}${fmtShort(times[m.id])}</span>`).join('') : '');
 
+// fixed slots: timer row (timer + penalty chip), at most two sub-chips (ghost or gap, next medal) + the split flash;
+// the progress row carries the rally pill (left) and the gate count (right); OFF ROAD sits under the progress row
 const PANE_HTML = `
   <div class="hud-tl">
     <div class="hud-stage"><b class="pl-tag"></b><span class="st-name"></span><span class="st-cond"></span></div>
-    <div class="hud-time">0:00.000</div>
-    <div class="hud-pens"><span class="hud-penflash"></span><span class="hud-pen"></span><span class="hud-gates"></span></div>
-    <div class="hud-sub"><span class="hud-rally"></span><span class="hud-ghost"></span><span class="hud-target"></span></div>
-    <div class="hud-gap"></div>
-    <div class="hud-split"></div>
+    <div class="hud-timerow"><div class="hud-time">0:00.000</div><div class="hud-pen"></div></div>
+    <div class="hud-sub"><span class="hud-ghost"></span><div class="hud-gap"></div><span class="hud-target"></span><div class="hud-split"></div></div>
   </div>
-  <div class="hud-progress"><div class="prog"><div class="prog-fill"></div><div class="prog-ticks"></div><div class="prog-cars"></div></div></div>
-  <div class="hud-rough">OFF ROAD</div>
+  <div class="hud-progress"><span class="hud-rallypill"></span><div class="prog"><div class="prog-fill"></div><div class="prog-ticks"></div><div class="prog-cars"></div></div><span class="hud-gates"></span></div>
+  <div class="hud-offroad">OFF ROAD</div>
   <div class="hud-br">
     <div class="speed"><span class="spd">0</span><small>km/h</small></div>
     <div class="gearrow"><span class="gear">1</span><div class="rpm"><div class="rpm-fill"></div></div></div>
@@ -42,10 +41,10 @@ export function createPane(i, parent) {
   parent.appendChild(el);
   const q = (s) => el.querySelector(s);
   return {
-    el, penflash: q('.hud-penflash'), pen: q('.hud-pen'), gates: q('.hud-gates'), rough: q('.hud-rough'), ghost: q('.hud-ghost'), target: q('.hud-target'), rally: q('.hud-rally'), tag: q('.pl-tag'), stage: q('.st-name'), cond: q('.st-cond'), time: q('.hud-time'), gap: q('.hud-gap'), split: q('.hud-split'),
+    el, pen: q('.hud-pen'), gates: q('.hud-gates'), rough: q('.hud-offroad'), ghost: q('.hud-ghost'), target: q('.hud-target'), rally: q('.hud-rallypill'), stageTag: q('.hud-stage'), tag: q('.pl-tag'), stage: q('.st-name'), cond: q('.st-cond'), time: q('.hud-time'), gap: q('.hud-gap'), split: q('.hud-split'),
     fill: q('.prog-fill'), ticks: q('.prog-ticks'), cars: q('.prog-cars'), speed: q('.spd'), gear: q('.gear'), rpm: q('.rpm-fill'),
     msg: q('.pane-msg'), msgK: q('.pm-kicker'), msgT: q('.pm-time'), msgW: q('.pm-wait'), notice: q('.notice'),
-    last: '', penTxt: '', gatesTxt: '', flashTxt: '', gapTxt: '', tgtTxt: '', rallyTxt: '', ghostTxt: '', markers: [],
+    last: '', penTxt: '', penN: 0, gatesTxt: '', gapTxt: '', tgtTxt: '', rallyTxt: '', ghostTxt: '', markers: [],
   };
 }
 
@@ -66,6 +65,8 @@ export function preparePanes(racers, stage, cond, opts = {}) {
     u.stage.textContent = stage.def.name;
     u.cond.innerHTML = condIcons(cond);
     u.tag.textContent = racers.length === 2 ? p.name : '';
+    u.stageTag.classList.remove('fade');
+    u.pen.className = 'hud-pen'; u.pen.textContent = ''; u.penTxt = ''; u.penN = 0;
     u.split.classList.remove('show');
     u.gap.textContent = ''; u.gapTxt = ''; u.gap.classList.remove('show');
     u.ticks.innerHTML = ticks;
@@ -87,14 +88,19 @@ export function updatePanes(racers, stage, state, rally, ghostDelta) {
     const u = p.ui, car = p.car;
     const txt = fmt(state === 'countdown' ? 0 : p.time);
     if (txt !== u.last) { u.time.textContent = txt; u.last = txt; }
-    // penalties: a red chip when one lands, a small persistent PEN tag, and the gate counter
+    // solo: the stage tag fades 5 s after GO (duel keeps it: it carries the P tag)
+    u.stageTag.classList.toggle('fade', !duel && state === 'race' && p.time - (p.pen || 0) > 5);
+    // penalty chip (one slot, right of the timer): the reason while it flashes ("MISSED GATE +5.0"), then the total
     const fl = p.penFlashT > 0 && state !== 'countdown' ? p.penFlash : '';
-    if (fl !== u.flashTxt) { u.penflash.textContent = fl; u.flashTxt = fl; u.penflash.classList.toggle('show', !!fl); if (fl) { u.penflash.classList.remove('pop'); void u.penflash.offsetWidth; u.penflash.classList.add('pop'); } }
-    const pt = p.pen > 0 ? `PEN +${p.pen.toFixed(1)}` : '';
-    if (pt !== u.penTxt) { u.pen.textContent = pt; u.penTxt = pt; u.pen.classList.toggle('show', !!pt); }
-    const r = p.rules, gt = r && r.total ? `<b>GATES</b> ${r.passed}/${r.total}${r.missed ? ` <span class="miss">${r.missed} missed</span>` : ''}` : '';
+    const pt = fl || (p.pen > 0 ? `PEN +${p.pen.toFixed(1)} s` : '');
+    if (pt !== u.penTxt) { u.pen.textContent = pt; u.penTxt = pt; u.pen.classList.toggle('show', !!pt); u.pen.classList.toggle('flash', !!fl); }
+    if (p.pen > 0 && p.pen !== u.penN) { u.penN = p.pen; u.pen.classList.remove('pop'); void u.pen.offsetWidth; u.pen.classList.add('pop'); }
+    // gate count pill (right of the progress bar)
+    const r = p.rules, gt = r && r.total ? `<b>GATES</b> ${r.passed}/${r.total}${r.missed ? `<span class="miss"> \u00b7 ${r.missed}<i> missed</i></span>` : ''}` : '';
     if (gt !== u.gatesTxt) { u.gates.innerHTML = gt; u.gatesTxt = gt; u.gates.classList.toggle('show', !!gt); }
-    u.rough.classList.toggle('show', !!p.roughOn && state === 'race' && !p.done);
+    // OFF ROAD (with a 0.3 s hold so it does not flicker)
+    if (p.roughOn && state === 'race' && !p.done) p.roughHold = 0.3;
+    u.rough.classList.toggle('show', (p.roughHold || 0) > 0 && state === 'race' && !p.done);
     u.speed.textContent = Math.round(Math.abs(car.vf != null ? car.vf : car.speed) * 3.6);
     u.gear.textContent = car.gear === 0 ? 'R' : String(car.gear | 0 || 1);
     u.rpm.style.width = (clamp(car.rpm, 0, 1) * 100).toFixed(1) + '%';
@@ -106,7 +112,8 @@ export function updatePanes(racers, stage, state, rally, ghostDelta) {
     const nt = !p.done && state !== 'finish' ? nextTarget(p.targets, p.time) : null;
     const tg = nt ? `${medalIcon(nt.id, 'sm')}<b>${nt.name}</b> ${fmtShort(nt.t)}` : '';
     if (tg !== u.tgtTxt) { u.target.innerHTML = tg; u.tgtTxt = tg; u.target.classList.toggle('show', !!tg); }
-    const rt = rally ? `<b>STAGE ${rally.n} / ${rally.of}</b> \u03a3 ${fmt(rally.totals[p.i] + (state === 'countdown' ? 0 : p.time))}` : '';
+    // rally pill (left of the progress bar); the running total only from stage 2, where it differs from the timer
+    const rt = rally ? `<b>RALLY ${rally.n}/${rally.of}</b>${rally.n > 1 ? ` \u00b7 \u03a3 ${fmtShort(rally.totals[p.i] + (state === 'countdown' ? 0 : p.time))}` : ''}` : '';
     if (rt !== u.rallyTxt) { u.rally.innerHTML = rt; u.rallyTxt = rt; u.rally.classList.toggle('show', !!rt); }
     if (!duel) continue;
     // live gap: distance along the road to the other car (cheap and stable)
@@ -144,20 +151,22 @@ export function paneFinished(racers) {
   }
 }
 
+// nextName null hides Next (the Daily Stage has no "next")
 export function renderFinish(def, run, nextName) {
   const { t, s, prev, isBest, medal, newMedal, up } = run;
   $('finMedal').innerHTML = medalBlock(medal, newMedal, up);
-  $('finStage').textContent = def.name + ' · complete';
+  $('finStage').textContent = def.daily ? 'Today\u2019s stage' : def.name;
   $('finTime').textContent = fmt(t);
   $('finBest').innerHTML = isBest
-    ? `<span class="newbest">NEW BEST</span>${prev ? ` &nbsp;${fmtDelta(t - prev.t)} on ${fmt(prev.t)}` : ''}${run.ghostSaved ? ' <span class="ghost-saved">ghost saved</span>' : ''}`
+    ? `<span class="newbest">NEW BEST</span>${prev ? ` &nbsp;${fmtDelta(t - prev.t)} on ${fmt(prev.t)}` : ''}`
     : `Best ${fmt(prev.t)} &nbsp;<span style="color:var(--bad)">${fmtDelta(t - prev.t)}</span>`;
   const rows = [['Split 1', s[0], prev && prev.s ? prev.s[0] : null], ['Split 2', s[1], prev && prev.s ? prev.s[1] : null], ['Finish', t, prev ? prev.t : null]];
+  // the delta column only when there is something to compare with
   $('finSplits').innerHTML = rows.map(([n, v, b]) => {
     const d = v != null && b != null ? v - b : null;
-    return `<tr><td>${n}</td><td>${fmt(v)}</td><td class="${deltaClass(d)}">${d == null ? '—' : fmtDelta(d)}</td></tr>`;
+    return `<tr><td>${n}</td><td>${fmt(v)}</td>${prev ? `<td class="${deltaClass(d)}">${d == null ? '—' : fmtDelta(d)}</td>` : ''}</tr>`;
   }).join('');
-  $('nextBtn').innerHTML = `Next: ${esc(nextName)}<span class="btn-key">N</span>`;
+  setNext($('nextBtn'), nextName);
 }
 
 export function renderDuelResults(def, racers, nextName) {
@@ -166,7 +175,7 @@ export function renderDuelResults(def, racers, nextName) {
   $('dfStage').textContent = def.name + ' · duel';
   const win = $('dfWinner');
   win.style.setProperty('--pc', tie ? 'var(--mustard)' : w.paint.hex);
-  win.innerHTML = tie ? '<span class="w-name">DEAD HEAT</span>' : `<span class="w-chip"></span><span class="w-name">${w.name} WINS</span><span class="w-paint">${w.paint.name}</span>`;
+  win.innerHTML = tie ? '<span class="w-name">DEAD HEAT</span>' : `<span class="w-chip"></span><span class="w-name">${w.name} WINS</span>`;
   $('dfGap').textContent = tie ? 'identical to the millisecond' : `by ${gap.toFixed(3)} s`;
   const chip = (p) => `<span class="pchip" style="background:${p.paint.hex}"></span>${p.name}`;
   const rows = [['Split 1', a.splits[0], b.splits[0]], ['Split 2', a.splits[1], b.splits[1]], ['Finish', a.time, b.time]];
@@ -175,7 +184,12 @@ export function renderDuelResults(def, racers, nextName) {
     const both = x != null && y != null, fa = both && x < y, fb = both && y < x;
     return `<tr><td>${n}</td><td class="${fa ? 'win' : ''}">${fmt(x)}</td><td class="${fb ? 'win' : ''}">${fmt(y)}</td><td>${both ? Math.abs(x - y).toFixed(3) : '—'}</td></tr>`;
   }).join('') + `<tr class="pen-row"><td>Penalties</td><td>${penCell(a)}</td><td>${penCell(b)}</td><td></td></tr>`;
-  $('dfNext').innerHTML = `Next: ${esc(nextName)}<span class="btn-key">N</span>`;
+  setNext($('dfNext'), nextName);
+}
+
+function setNext(btn, nextName) {
+  btn.classList.toggle('hidden', !nextName);
+  if (nextName) btn.innerHTML = `<span class="b-l">Next \u00b7 ${esc(nextName)}</span><span class="btn-key">N</span>`;
 }
 
 // earned medal with a CSS flourish, NEW MEDAL tag and the gap to the next one up
@@ -193,20 +207,22 @@ export function renderRallyStage(info) {
   const solo = info.racers.length === 1, a = info.racers[0];
   let body;
   if (solo) {
+    // stage 1: the total equals the stage time, so only the par delta; later stages add the running total
     const d = info.parTotal != null ? a.total - info.parTotal : null;
+    const par = d != null ? `<span class="lbl">vs par</span> <span class="${deltaClass(d)}">${fmtDelta(d)}</span>` : '';
+    const cum = info.n > 1 ? `<span class="lbl">Total</span> <b>${fmt(a.total)}</b>${par ? ' \u00b7 ' + par : ''}` : par;
     body = `<div class="fin-time">${fmt(a.time)}</div>${a.penHtml || ''}
       <div class="rally-medal">${medalBlock(a.medal, a.newMedal, a.up)}</div>${info.earnHtml || ''}
-      <div class="rally-cum"><span class="lbl">Total</span> <b>${fmt(a.total)}</b>${d != null ? ` <span class="lbl">vs par ${fmt(info.parTotal)}</span> <span class="${deltaClass(d)}">${fmtDelta(d)}</span>` : ''}</div>`;
+      ${cum ? `<div class="rally-cum">${cum}</div>` : ''}`;
   } else {
     body = `<table class="splits duel-splits"><tr class="hd"><td></td>${info.racers.map((r) => `<td><span class="pchip" style="background:${r.hex}"></span>${r.name}</td>`).join('')}</tr>
       <tr><td>Stage</td>${info.racers.map((r) => `<td>${fmt(r.time)}</td>`).join('')}</tr>
       <tr><td>Total</td>${info.racers.map((r, k) => `<td class="${r.total < info.racers[1 - k].total ? 'win' : ''}">${fmt(r.total)}</td>`).join('')}</tr>
       <tr><td>Penalties</td>${info.racers.map((r) => `<td>${r.pen > 0 ? `<span class="pen-cell">+${r.pen.toFixed(1)} s</span>` : '<span class="clean-badge sm">CLEAN</span>'}</td>`).join('')}</tr></table>`;
   }
-  $('rallyBody').innerHTML = `<div class="panel-kicker">Rally \u00b7 ${esc(info.regionName)} \u00b7 stage ${info.n} / ${info.of}</div>
+  $('rallyBody').innerHTML = `<div class="panel-kicker">Rally ${info.n}/${info.of} \u00b7 ${esc(info.regionName)}</div>
     <div class="panel-title">${esc(info.stageName)}</div>${body}
-    <div class="rally-next">Next: <b>${esc(info.nextName)}</b></div>
-    <div class="panel-btns"><button class="btn primary" data-act="continue">Continue<span class="btn-key">Enter</span></button><button class="btn ghost" data-act="abandon">Abandon rally</button></div>`;
+    <div class="panel-btns res-btns"><button class="btn primary" data-act="continue"><span class="b-l">Continue \u00b7 ${esc(info.nextName)}</span><span class="btn-key">Enter</span></button><button class="btn ghost wide" data-act="abandon">Abandon rally</button></div>`;
 }
 
 // info: { regionName, ids, names, racers:[{name, hex, times:[...], total, medals:[...]}], parTotal, trophy, prev, isBest }
@@ -215,8 +231,10 @@ export function renderRallyResults(info) {
   let head;
   if (solo) {
     const d = info.prev ? a.total - info.prev.t : null;
+    const dp = info.parTotal ? a.total - info.parTotal : null;
+    const vsPar = dp != null ? ` <span class="vs-par">vs par <span class="${deltaClass(dp)}">${fmtDelta(dp)}</span></span>` : '';
     head = `<div class="fin-time">${fmt(a.total)}</div>
-      <div class="fin-best">${info.isBest ? `<span class="newbest">NEW BEST</span>${info.prev ? ` &nbsp;${fmtDelta(d)} on ${fmt(info.prev.t)}` : ''}` : `Best ${fmt(info.prev.t)} &nbsp;<span style="color:var(--bad)">${fmtDelta(d)}</span>`}</div>
+      <div class="fin-best">${info.isBest ? `<span class="newbest">NEW BEST</span>${info.prev ? ` &nbsp;${fmtDelta(d)} on ${fmt(info.prev.t)}` : ''}` : `Best ${fmt(info.prev.t)} &nbsp;<span style="color:var(--bad)">${fmtDelta(d)}</span>`}${vsPar}</div>
       <div class="rally-medal">${trophyBlock(info.trophy)}</div>${info.earnHtml || ''}`;
   } else {
     const [p, q] = info.racers, gap = Math.abs(p.total - q.total), w = p.total <= q.total ? p : q;
@@ -225,21 +243,24 @@ export function renderRallyResults(info) {
   }
   const cols = info.racers.map((r) => `<td>${solo ? 'Time' : `<span class="pchip" style="background:${r.hex}"></span>${r.name}`}</td>`).join('');
   const rows = info.names.map((n, k) => `<tr><td>${esc(n)}</td>${info.racers.map((r) => `<td>${fmt(r.times[k])}${solo ? ' ' + medalIcon(r.medals[k], 'sm') : ''}</td>`).join('')}</tr>`).join('');
-  const total = `<tr class="tot"><td>Total</td>${info.racers.map((r) => `<td>${fmt(r.total)}</td>`).join('')}</tr>`;
-  const par = solo && info.parTotal ? `<tr><td>Par</td><td>${fmt(info.parTotal)}</td></tr>` : '';
+  // solo: the big number is the total and par sits next to NEW BEST; duel keeps a total row (no big number there)
+  const total = solo ? '' : `<tr class="tot"><td>Total</td>${info.racers.map((r) => `<td>${fmt(r.total)}</td>`).join('')}</tr>`;
   const pens = `<tr class="pen-row"><td>Penalties</td>${info.racers.map((r) => `<td>${r.pen > 0 ? `<span class="pen-cell">+${r.pen.toFixed(1)} s</span>` : '<span class="clean-badge sm">CLEAN</span>'}</td>`).join('')}</tr>`;
-  $('rallyBody').innerHTML = `<div class="panel-kicker">Rally complete \u00b7 ${esc(info.regionName)}</div>${head}
-    <table class="splits duel-splits rally-table"><tr class="hd"><td>Stage</td>${cols}</tr>${rows}${total}${pens}${par}</table>
-    <div class="panel-btns"><button class="btn primary" data-act="again">Rally again<span class="btn-key">R</span></button><button class="btn ghost" data-act="menu">Menu<span class="btn-key">Enter</span></button></div>`;
+  $('rallyBody').innerHTML = `<div class="panel-kicker">${esc(info.regionName)} rally</div>${head}
+    <table class="splits duel-splits rally-table"><tr class="hd"><td>Stage</td>${cols}</tr>${rows}${total}${pens}</table>
+    <div class="panel-btns res-btns"><button class="btn primary" data-act="again">Rally again<span class="btn-key">Enter</span></button><button class="btn ghost" data-act="menu">Menu<span class="btn-key">Esc</span></button></div>`;
 }
 
+const TROPHY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v3h3v2a5 5 0 0 1-4.6 5A5 5 0 0 1 13 15.9V18h3v3H8v-3h3v-2.1A5 5 0 0 1 8.6 13 5 5 0 0 1 4 8V6h3zm-1 5c0 1.4.9 2.6 2 3V8zm12 0h-2v3c1.1-.4 2-1.6 2-3z"/></svg>';
+export const trophyIcon = (id, cls = '') => `<span class="medal trophy-ico ${id || 'none'} ${cls}" title="${id ? MEDAL[id].name + ' trophy' : 'No trophy yet'}">${TROPHY_SVG}</span>`;
 export function trophyBlock(id) {
   return `<div class="medal-big trophy ${id || 'none'}"><span class="medal ${id || 'none'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v3h3v2a5 5 0 0 1-4.6 5A5 5 0 0 1 13 15.9V18h3v3H8v-3h3v-2.1A5 5 0 0 1 8.6 13 5 5 0 0 1 4 8V6h3zm-1 5c0 1.4.9 2.6 2 3V8zm12 0h-2v3c1.1-.4 2-1.6 2-3z"/></svg></span><span class="mb-name">${id ? MEDAL[id].name + ' trophy' : 'No trophy'}</span></div>`;
 }
 
 // credits earned on a run: "+ 310 CR" with its lines, and an optional nudge towards the garage
+// (hint: plain text; rendered as one clickable line that opens the Garage, with a V badge on keyboards)
 export function earningsBlock(e, balance, hint) {
   if (!e || !e.total) return '';
   return `<div class="earn"><div class="earn-h"><span class="earn-t">+ ${e.total.toLocaleString('en-US')} CR</span><span class="earn-bal">balance ${Math.round(balance).toLocaleString('en-US')} CR</span></div>
-    <div class="earn-lines">${e.lines.map(([l, n]) => `<span><i>${esc(l)}</i><b>+${n}</b></span>`).join('')}</div>${hint ? `<div class="earn-hint">${hint}</div>` : ''}</div>`;
+    <div class="earn-lines">${e.lines.map(([l, n]) => `<span><i>${esc(l)}</i><b>+${n}</b></span>`).join('')}</div>${hint ? `<button class="earn-hint" data-act="garage">${esc(hint)} <b>Garage \u203a</b><span class="btn-key">V</span></button>` : ''}</div>`;
 }

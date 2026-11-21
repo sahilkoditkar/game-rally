@@ -98,22 +98,35 @@ function glowTex() {
   g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
   glow = new THREE.CanvasTexture(c); glow.colorSpace = THREE.SRGBColorSpace; return glow;
 }
-const ACCENT = new THREE.Color('#f2b632'), GREEN = new THREE.Color('#4fd27e'), RED = new THREE.Color('#ff4a32');
+const ACCENT = new THREE.Color('#f2b632'), GREEN = new THREE.Color('#4fd27e'), RED = new THREE.Color('#ff4a32'), INK = new THREE.Color('#24252d');
+const GEM_MIN_PX = 0.028;  // the gem never shrinks below ~this fraction of the view height (scale grows with distance)
+const BURST_T = 0.4;       // s: the pass / miss pulse
 export class GateMarker {
   constructor(scene) {
     this.group = new THREE.Group(); this.group.visible = false;
-    this.mat = new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.9, depthWrite: false });
-    this.gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.55, 0), this.mat);
-    this.gem.scale.set(1, 1.5, 1);
-    this.group.add(this.gem);
-    this.glowMat = new THREE.SpriteMaterial({ map: glowTex(), color: ACCENT, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending });
-    this.glows = [-1, 1].map(() => { const s = new THREE.Sprite(this.glowMat); s.scale.set(1.6, 1.6, 1); this.group.add(s); return s; });
-    // burst: an expanding ring at a gate just passed (green) or missed (red)
-    this.burstMat = new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
-    this.burst = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.16, 6, 28), this.burstMat);
-    this.burst.visible = false;
+    // the gem: mustard with a dark rim so it reads against bright sky and snow; drawn on top so it is
+    // visible through trees from a distance (it is a waypoint, not scenery)
+    this.gemWrap = new THREE.Group(); this.group.add(this.gemWrap);
+    const geo = new THREE.OctahedronGeometry(0.7, 0);
+    this.mat = new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.95, depthWrite: false, depthTest: false });
+    this.gem = new THREE.Mesh(geo, this.mat);
+    this.gem.scale.set(1, 1.5, 1); this.gem.renderOrder = 11;
+    this.rimMat = new THREE.MeshBasicMaterial({ color: INK, transparent: true, opacity: 0.85, depthWrite: false, depthTest: false, side: THREE.BackSide });
+    this.rim = new THREE.Mesh(geo, this.rimMat);
+    this.rim.scale.set(1.32, 1.32 * 1.5, 1.32); this.rim.renderOrder = 10;
+    this.gemWrap.add(this.rim, this.gem);
+    // the next gate's two poles: a mustard sleeve and a soft glow on top (the poles themselves are track.js's)
+    this.glowMat = new THREE.SpriteMaterial({ map: glowTex(), color: ACCENT, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.glows = [-1, 1].map(() => { const s = new THREE.Sprite(this.glowMat); s.scale.set(2.2, 2.2, 1); this.group.add(s); return s; });
+    this.sleeveMat = new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.5, depthWrite: false });
+    const sg = new THREE.CylinderGeometry(0.13, 0.15, 3.0, 6);
+    this.sleeves = [-1, 1].map(() => { const m = new THREE.Mesh(sg, this.sleeveMat); this.group.add(m); return m; });
+    // pass / miss: a brief small pulse on the two pole tops of the gate just crossed (never around the car)
+    this.burst = new THREE.Group(); this.burst.visible = false;
+    this.burstMat = new THREE.SpriteMaterial({ map: glowTex(), color: GREEN, transparent: true, opacity: 0, depthWrite: false });
+    this.bursts = [-1, 1].map(() => { const s = new THREE.Sprite(this.burstMat); this.burst.add(s); return s; });
     scene.add(this.group, this.burst);
-    this.t = 0; this.bt = 1;
+    this.t = 0; this.bt = 1; this._v = new THREE.Vector3();
   }
   setGate(g, stage) {
     this.gate = g;
@@ -123,31 +136,49 @@ export class GateMarker {
     this.base = new THREE.Vector3(g.x, y + 4.6, g.z);
     this.group.position.copy(this.base);
     this.group.rotation.y = Math.atan2(g.tx, g.tz);
-    // on the actual poles (track.js puts them GATE_POLE_OUT = 0.4 m outside the opening)
-    this.glows[0].position.set(g.half + POLE_OUT, -1.8, 0); this.glows[1].position.set(-(g.half + POLE_OUT), -1.8, 0);
+    // on the actual poles (track.js puts them GATE_POLE_OUT = 0.4 m outside the opening), sleeves on the ground there
+    [1, -1].forEach((side, k) => {
+      const off = (g.half + POLE_OUT) * side;
+      const px = g.x + g.tz * off, pz = g.z - g.tx * off;
+      let gy = y;
+      try { if (typeof stage.height === 'function') gy = stage.height(px, pz, true) - 0.05; } catch { gy = y; }
+      if (!Number.isFinite(gy)) gy = y;
+      this.glows[k].position.set(off, gy - this.base.y + 3.25, 0);
+      this.sleeves[k].position.set(off, gy - this.base.y + 1.55, 0);
+    });
   }
   flash(g, stage, ok) {
     if (!g) return;
     this.burstMat.color.copy(ok ? GREEN : RED);
-    this.burst.position.set(g.x, (g.y ?? stage.sy[g.idx]) + 2.2, g.z);
+    const y = g.y ?? stage.sy[g.idx];
+    this.burst.position.set(g.x, y, g.z);
     this.burst.rotation.set(0, Math.atan2(g.tx, g.tz), 0);
+    [1, -1].forEach((side, k) => this.bursts[k].position.set((g.half + POLE_OUT) * side, 3.1, 0));
     this.burst.visible = true; this.bt = 0;
+  }
+  // keep the gem readable from far away: scale it up with distance so it never drops below GEM_MIN_PX of the view
+  fit(cam) {
+    if (!this.group.visible || !cam) return;
+    const d = cam.position.distanceTo(this.gemWrap.getWorldPosition(this._v));
+    const px = (1.05 * 2) / (2 * d * Math.tan(((cam.fov || 50) * Math.PI) / 360)); // gem height / view height at scale 1
+    this.gemWrap.scale.setScalar(Math.max(1, GEM_MIN_PX / Math.max(px, 1e-4)));
   }
   update(dt) {
     this.t += dt;
     if (this.group.visible) {
-      this.gem.rotation.y = this.t * 1.6;
-      this.gem.position.y = Math.sin(this.t * 2.4) * 0.25;
-      this.glowMat.opacity = 0.4 + 0.2 * Math.sin(this.t * 3.1);
+      this.gem.rotation.y = this.rim.rotation.y = this.t * 1.6;
+      this.gemWrap.position.y = Math.sin(this.t * 2.4) * 0.25;
+      this.glowMat.opacity = 0.6 + 0.25 * Math.sin(this.t * 3.1);
+      this.sleeveMat.opacity = 0.42 + 0.18 * Math.sin(this.t * 3.1);
     }
-    if (this.burst.visible) {
+    if (this.bt < BURST_T) { // advances even while the other pane is being drawn (duel)
       this.bt += dt;
-      const k = this.bt / 0.6;
+      const k = this.bt / BURST_T;
       if (k >= 1) this.burst.visible = false;
-      else { this.burst.scale.setScalar(1 + k * 1.6); this.burstMat.opacity = 0.85 * (1 - k); }
+      else { const sc = 0.7 + k * 1.1; for (const s of this.bursts) s.scale.set(sc, sc, 1); this.burstMat.opacity = 0.95 * (1 - k); }
     }
   }
   show(on) { this.group.visible = on && !!this.gate; if (!on) this.burst.visible = false; }
-  setVisibleFor(on) { this.group.visible = on && !!this.gate && this.active; this.burst.visible = on && this.bt < 0.6; }
+  setVisibleFor(on) { this.group.visible = on && !!this.gate && this.active; this.burst.visible = on && this.bt < BURST_T; }
   dispose(scene) { scene.remove(this.group, this.burst); }
 }
