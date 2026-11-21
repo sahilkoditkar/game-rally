@@ -115,13 +115,48 @@ export const STAGES = [
     ground: ['#9aa07a', '#8a9468', '#76845a'], rock: '#c9c8bf', verge: '#9b9479',
     road: ['#8f897a', '#7f7a6c'], dust: '#5f625d', sun: '#dde3e3', sunPos: [-30, 80, 10], ambient: ['#bcc8cb', '#5a5a48'],
   },
+  // ---------------------------------------------------------------- peaks (volcanic high pass)
+  // These use the feature-based path generator: `layout` is a list of tokens, in order:
+  //   't<n>' n flowing corners · 'H' one hairpin (180°-ish, ~12.5–13.5 m radius) · 'S<n>' a stacked switchback series
+  //   with n hairpins, climbing ('S<n>d' descends) · 'J<1|2|3>' a jump straight (kicker + drop-away + landing).
+  // twist / sharp / hills keep their meaning for the flowing parts; points is unused.
+  {
+    id: 'cinderreach', name: 'Cinder Reach', tag: 'Volcanic pass · hairpins and kickers', seed: 211,
+    layout: ['t3', 'H', 't3', 'J1', 't2', 'J2', 't3', 'H', 't3', 'J1', 't3'],
+    twist: 0.9, sharp: 0.22, hills: 11, grip: 1.0, flora: 'volcanic',
+    region: 'peaks', night: false, rain: false, par: null,
+    sky: ['#3d6aa8', '#d9d3c6'], fog: '#cdc8bd', fogRange: [80, 360],
+    ground: ['#45403c', '#6a4a37', '#9b7a3c'], rock: '#2b2928', verge: '#706659',
+    road: ['#b8ad9c', '#a79c8d'], dust: '#a39a8e', sun: '#fff1dc', sunPos: [50, 65, -40], ambient: ['#cfd8e6', '#5a4a3c'],
+  },
+  {
+    id: 'sulfurleap', name: 'Sulfur Leap', tag: 'Steam-vent flats · big air', seed: 227,
+    layout: ['t2', 'J2', 't2', 'J1', 't2', 'J3', 't2', 'J2', 't2', 'J1', 't2', 'J2', 't2', 'J1', 't2'],
+    twist: 0.7, sharp: 0.12, hills: 8, grip: 1.04, flora: 'volcanic',
+    region: 'peaks', night: false, rain: false, par: null,
+    sky: ['#8a8f78', '#ddd8b6'], fog: '#d0cbac', fogRange: [45, 260],
+    ground: ['#57514a', '#7a5a40', '#b59440'], rock: '#353230', verge: '#7f7564',
+    road: ['#c4b9a6', '#b3a895'], dust: '#b8ae98', sun: '#fff6d8', sunPos: [-40, 70, 30], ambient: ['#e2e0c8', '#5e5442'],
+  },
+  {
+    id: 'kettlecrown', name: 'Kettlecrown Ascent', tag: 'Dusk climb · switchback stack', seed: 239,
+    layout: ['t3', 'S4', 't4', 'J3', 't4', 'H', 't3', 'S2d', 't3'],
+    twist: 1.0, sharp: 0.25, hills: 12, grip: 0.98, flora: 'volcanic',
+    region: 'peaks', night: false, rain: false, par: null,
+    sky: ['#232a58', '#f0915e'], fog: '#a7766a', fogRange: [60, 310],
+    ground: ['#3b3634', '#5f4135', '#8c6c3a'], rock: '#262323', verge: '#5f544b',
+    road: ['#ada191', '#9d9183'], dust: '#8f857c', sun: '#ffb27c', sunPos: [-70, 24, 40], ambient: ['#cfaab8', '#3c2e2e'],
+  },
 ];
+// the daily stage draws its look from these (the original 12); keep this list fixed so daily stages never change
+const DAILY_TEMPLATES = STAGES.filter((d) => !d.layout);
 
 export const REGIONS = [
   { id: 'forest', name: 'Hollowmere Woods', blurb: 'Gravel lanes under larch and pine: autumn sun, soaking rain, and a moonlit night run.', stages: ['larch', 'mossbrook', 'owlcrest'] },
   { id: 'desert', name: 'Saltwind Badlands', blurb: 'Hardpack across red mesas: wide-open plateau, fast dusk sweepers and a tight canyon.', stages: ['mesa', 'ember', 'redcleft'] },
   { id: 'snow', name: 'Frostfell Range', blurb: 'Packed snow and ice between the firs: bluebird sprint, alpine pass and a night descent.', stages: ['glimmer', 'frost', 'lanternfell'] },
   { id: 'coast', name: 'Corallin Coast', blurb: 'White limestone tracks above a teal sea, lined with umbrella pines and palms.', stages: ['brightwater', 'saffron', 'gullrock'] },
+  { id: 'peaks', name: 'Ashcrown Pass', blurb: 'Basalt and cinder above the clouds: tight hairpins, steaming vents and gravel kickers that throw you into the air.', stages: ['cinderreach', 'sulfurleap', 'kettlecrown'] },
 ];
 
 export function mulberry(a) {
@@ -190,14 +225,131 @@ function samplePath(def, R) {
   return { n: N, sx, sz, tx, tz, curv, startIdx, finishIdx, length: (finishIdx - startIdx) * STEP };
 }
 
-// timed length of a stage in metres (start gate to finish gate), path only: ~1-3 ms
-export function stageLength(def) { return samplePath(def, mulberry(def.seed)).length; }
+// ---------------------------------------------------------------- feature path (hairpins, switchbacks, jumps)
+// Jump sizes: th = kicker slope at the lip, a = drop-away/landing slope, F = design flight (m) at ~115 km/h
+// (car gravity 20 m/s²: flight ≈ 2 v² cos²th (th + a) / g, tuned against the car.js flight model: ~8/14/23 m at
+// ~125 km/h). Lu = ramp length chosen so the bump nets to zero height.
+export const JUMPS = { 1: { th: 0.04, a: 0.025, F: 8 }, 2: { th: 0.065, a: 0.05, F: 14 }, 3: { th: 0.1, a: 0.08, F: 22 } };
+const JUMP_EASE = 30, JUMP_RUNIN = 30, JUMP_RUNOUT = 60;
+for (const k in JUMPS) { const J = JUMPS[k]; J.Lu = 5 + J.a * (J.F + 15 + JUMP_EASE / 2) / J.th; }
+// height offset (relative to the take-off trend line) of a jump at distance s from its lip
+function jumpSlope(J, s) {
+  if (s < -J.Lu || s > J.F + 15 + JUMP_EASE) return 0;
+  if (s < 0) return J.th * smoothstep(-J.Lu, -J.Lu + 10, s);
+  if (s < J.F + 15) return -J.a;
+  return -J.a * (1 - smoothstep(J.F + 15, J.F + 15 + JUMP_EASE, s));
+}
+// road-index ranges kept clear of gates/splits around each jump (40 m before the lip to 40 m past touchdown)
+const jumpZone = (jp) => [jp.idx - Math.round(40 / STEP), jp.idx + Math.round((JUMPS[jp.size].F + 40) / STEP)];
+
+// Turtle path from arcs and straights. Hairpins turn by π − 2δ so successive legs open up away from the apex
+// (2R apart at the apex, 2R + 2 L sin δ at the open end); legs of a stack alternate ±(π/2 − δ) across the slope
+// while the stage as a whole progresses +Z. Validated: any two points more than 120 m apart along the road
+// (outside the car's ±60-sample tracking window) are ≥ 35 m apart; points 60–120 m apart are ≥ 20 m apart.
+function samplePeaks(def, R) {
+  let best = null;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const p = buildPeaks(def, R);
+    p.attempt = attempt;
+    if (p.ok) return p;
+    if (!best || p.minFar > best.minFar) best = p;
+  }
+  return best;
+}
+function buildPeaks(def, R) {
+  const segs = [];
+  let h = 0, S = 0;
+  const hairpins = [], jumps = [];
+  const seg = (k, L, grade = 0, tag = '') => { if (L > 0.01) { segs.push({ k, L, grade, tag, s0: S }); S += L; h += k * L; } };
+  const turnTo = (ht, r, grade = 0) => { const dh = ht - h; if (Math.abs(dh) > 1e-6) seg(Math.sign(dh) / r, Math.abs(dh) * r, grade); };
+  seg(0, 110);
+  for (const tok of def.layout) {
+    const c = tok[0], num = parseInt(tok.slice(1)) || 1;
+    if (c === 't') {
+      for (let e = 0; e < num; e++) {
+        seg(0, 12 + R() * 35);
+        const sgn = R() < 0.5 + h * 0.4 ? -1 : 1;
+        const ht = clamp(h + sgn * (0.3 + R() * 0.8) * def.twist, -1.0, 1.0);
+        turnTo(ht, R() < def.sharp ? 26 + R() * 14 : 45 + R() * 60);
+      }
+    } else if (c === 'H' || c === 'S') {
+      const single = c === 'H', nh = single ? 1 : num;
+      const r = single ? 12.5 + R() : 13.5 + R() * 0.5, dl = single ? 0.12 : 0.1, L = single ? 62 + R() * 12 : 100 + R() * 20;
+      const climb = tok.endsWith('d') ? -1 : single ? (R() < 0.5 ? -1 : 1) : 1;
+      const gl = (single ? 0.06 : 0.075) * climb, gh = 0.02 * climb;
+      let side = h > 0.2 ? 1 : h < -0.2 ? -1 : (R() < 0.5 ? -1 : 1);
+      turnTo(side * (Math.PI / 2 - dl), 28, gl * 0.5);
+      for (let q = 0; q <= nh; q++) {
+        seg(0, q === 0 ? L * 0.85 : L, gl, 'leg');
+        if (q < nh) {
+          const len = (Math.PI - 2 * dl) * r;
+          hairpins.push({ s: S + len / 2, r, turn: Math.PI - 2 * dl, dir: -side });
+          seg(-side / r, len, gh, 'hairpin');
+          side = -side;
+        }
+      }
+      turnTo(0, 28, gl * 0.5);
+    } else if (c === 'J') {
+      const J = JUMPS[num];
+      jumps.push({ s: S + JUMP_RUNIN + J.Lu, size: num });
+      seg(0, JUMP_RUNIN + J.Lu + J.F + 15 + JUMP_EASE + JUMP_RUNOUT, 0, 'jump');
+    }
+  }
+  turnTo(0, 60);
+  seg(0, 100);
+  // sample every STEP metres (exact arcs)
+  const n = Math.floor(S / STEP), N = n + 1;
+  const sx = new Float32Array(N), sz = new Float32Array(N), tx = new Float32Array(N), tz = new Float32Array(N), curv = new Float32Array(N);
+  const climb = new Float32Array(N);
+  let x0 = 0, z0 = -90, h0 = 0, q = 0, c0 = 0;
+  for (let i = 0; i < N; i++) {
+    const s = i * STEP;
+    while (q < segs.length - 1 && s > segs[q].s0 + segs[q].L) {
+      const g = segs[q], L = g.L;
+      if (g.k) { x0 += (Math.cos(h0) - Math.cos(h0 + g.k * L)) / g.k; z0 += (Math.sin(h0 + g.k * L) - Math.sin(h0)) / g.k; }
+      else { x0 += Math.sin(h0) * L; z0 += Math.cos(h0) * L; }
+      h0 += g.k * L; c0 += g.grade * L; q++;
+    }
+    const g = segs[q], u = s - g.s0, hh = h0 + g.k * u;
+    if (g.k) { sx[i] = x0 + (Math.cos(h0) - Math.cos(hh)) / g.k; sz[i] = z0 + (Math.sin(hh) - Math.sin(h0)) / g.k; }
+    else { sx[i] = x0 + Math.sin(h0) * u; sz[i] = z0 + Math.cos(h0) * u; }
+    tx[i] = Math.sin(hh); tz[i] = Math.cos(hh); climb[i] = c0 + g.grade * u;
+  }
+  for (let i = 0; i < N; i++) {
+    const a = Math.max(0, i - 3), b = Math.min(N - 1, i + 3);
+    let dh = Math.atan2(tx[b], tz[b]) - Math.atan2(tx[a], tz[a]);
+    dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+    curv[i] = dh / ((b - a) * STEP);
+  }
+  // round off the grade changes
+  const cl = new Float32Array(N);
+  for (let i = 0; i < N; i++) { let t = 0, w = 0; for (let j = Math.max(0, i - 8); j <= Math.min(N - 1, i + 8); j++) { t += climb[j]; w++; } cl[i] = t / w; }
+  // spacing validation
+  let minFar = Infinity, minMid = Infinity;
+  for (let i = 0; i < N; i += 1) for (let j = i + 30; j < N; j += 1) {
+    const dx = sx[i] - sx[j], dz = sz[i] - sz[j], d2 = dx * dx + dz * dz;
+    if (j - i > 60) { if (d2 < minFar * minFar) minFar = Math.sqrt(d2); }
+    else if (d2 < minMid * minMid) minMid = Math.sqrt(d2);
+    if (d2 > 160000) j += Math.floor((Math.sqrt(d2) - 400) / STEP); // far away: skip ahead
+  }
+  const startIdx = Math.round(80 / STEP), finishIdx = N - Math.round(70 / STEP);
+  return {
+    n: N, sx, sz, tx, tz, curv, startIdx, finishIdx, length: (finishIdx - startIdx) * STEP, climb: cl,
+    hairpins: hairpins.map((hp) => ({ idx: Math.round(hp.s / STEP), r: hp.r, turn: hp.turn, dir: hp.dir })),
+    jumps: jumps.map((jp) => ({ idx: Math.round(jp.s / STEP), size: jp.size })),
+    minFar, minMid, ok: minFar >= 35 && minMid >= 20,
+  };
+}
+const pathFor = (def, R) => (def.layout ? samplePeaks(def, R) : samplePath(def, R));
+
+// timed length of a stage in metres (start gate to finish gate), path only: ~1-3 ms (feature stages: ~10-30 ms)
+export function stageLength(def) { return pathFor(def, mulberry(def.seed)).length; }
 
 // cheap reference-time estimate from the path alone: a curvature speed profile mirroring the autopilot's
 // planner (lateral limit from grip, 9 m/s² braking, a speed-dependent acceleration), with fitted constants.
 // Fitted against the baked autopilot pars of the 12 STAGES.
 export function estimatePar(def) {
-  const p = samplePath(def, mulberry(def.seed));
+  const p = pathFor(def, mulberry(def.seed));
   return Math.round(profileTime(p, def.grip) * 10) / 10;
 }
 const EP = { lat: 10.5 * 0.75, vmax: 41, acc: 6.5, accFall: 0.11, k: 0.907, c: 0 };
@@ -230,7 +382,7 @@ const BIOME = { forest: 'Forest', desert: 'Desert', snow: 'Snow', coast: 'Coast'
 export function dailyStage(dateStr) {
   const seedHash = hashStr('dustline-daily:' + dateStr);
   const R = mulberry(seedHash);
-  const tpl = STAGES[Math.floor(R() * STAGES.length)];
+  const tpl = DAILY_TEMPLATES[Math.floor(R() * DAILY_TEMPLATES.length)];
   const def = { id: 'daily-' + dateStr, name: 'Daily Stage' };
   for (const k of PALETTE_KEYS) if (tpl[k] !== undefined) def[k] = tpl[k];
   Object.assign(def, {
@@ -292,6 +444,11 @@ export class Stage {
   baseH(x, z) {
     const A = this.def.hills;
     const h = this.n1(x / 240, z / 240) * A + this.n1(x / 90 + 40, z / 90) * A * 0.35 + this.n2(x / 28, z / 28) * A * 0.07;
+    if (this.reg) {
+      let f = (z - this.reg.z0) / this.reg.bin; f = clamp(f, 0, this.reg.nb - 1.001);
+      const k = Math.floor(f), u = f - k;
+      return h + this.reg.v[k] + (this.reg.v[k + 1] - this.reg.v[k]) * u;
+    }
     if (!this.coast) return h;
     // coast: beyond a wandering shoreline on the sea side the land falls away to a seabed below sea level
     const c = this.coast;
@@ -320,10 +477,13 @@ export class Stage {
 
   buildPath() {
     const d = this.def;
-    const p = samplePath(d, this.R);
+    const p = pathFor(d, this.R);
     const N = this.n = p.n;
     this.sx = p.sx; this.sz = p.sz; this.tx = p.tx; this.tz = p.tz; this.curv = p.curv;
     this.hOff = 0;
+    this.hairpins = p.hairpins || [];
+    this.jumps = p.jumps || [];
+    this.pathCheck = d.layout ? { minFar: p.minFar, minMid: p.minMid, ok: p.ok, attempt: p.attempt } : null;
     if (d.seaLevel != null) this.buildCoast();
     let h0 = new Float32Array(N);
     for (let i = 0; i < N; i++) h0[i] = this.baseH(this.sx[i], this.sz[i]);
@@ -342,11 +502,20 @@ export class Stage {
       this.hOff = d.seaLevel + 2.2 - mn;
       for (let i = 0; i < N; i++) h0[i] += this.hOff;
     }
+    if (p.climb) {
+      // feature stages: planned climb (switchbacks) on top of the smoothed hills, a matching regional slope for
+      // the terrain away from the road, and the jump kickers last so no smoothing can flatten them
+      this.multi = true;
+      for (let i = 0; i < N; i++) h0[i] += p.climb[i];
+      this.buildRegional(p.climb);
+      this.applyJumps(h0);
+    }
     this.sy = h0;
     this.startIdx = p.startIdx;
     this.finishIdx = p.finishIdx;
     this.length = p.length;
     this.splits = [1 / 3, 2 / 3].map((f) => Math.round(this.startIdx + (this.finishIdx - this.startIdx) * f));
+    if (p.climb) this.splits = this.splits.map((i) => this.clearIndex(i, 8));
     this.hash = new Map();
     for (let i = 0; i < N; i++) {
       const k = Math.floor(this.sx[i] / 32) * 100003 + Math.floor(this.sz[i] / 32);
@@ -378,7 +547,83 @@ export class Stage {
     return r;
   }
 
+  // regional height field for feature stages: the planned climb averaged per 8 m band of z, heavily smoothed
+  buildRegional(climb) {
+    const { sz, n } = this, bin = 8;
+    let zmin = Infinity, zmax = -Infinity; for (let i = 0; i < n; i++) { zmin = Math.min(zmin, sz[i]); zmax = Math.max(zmax, sz[i]); }
+    const nb = Math.ceil((zmax - zmin) / bin) + 2, v = new Float32Array(nb), w = new Float32Array(nb);
+    for (let i = 0; i < n; i++) { const k = Math.round((sz[i] - zmin) / bin); v[k] += climb[i]; w[k]++; }
+    let last = -1;
+    for (let k = 0; k < nb; k++) if (w[k]) {
+      v[k] /= w[k];
+      if (last >= 0) for (let q = last + 1; q < k; q++) v[q] = v[last] + (v[k] - v[last]) * (q - last) / (k - last);
+      else for (let q = 0; q < k; q++) v[q] = v[k];
+      last = k;
+    }
+    for (let k = last + 1; k < nb; k++) v[k] = v[last];
+    let a = v;
+    for (let pass = 0; pass < 3; pass++) { const b = new Float32Array(nb); for (let k = 0; k < nb; k++) { let t = 0, c = 0; for (let q = Math.max(0, k - 4); q <= Math.min(nb - 1, k + 4); q++) { t += a[q]; c++; } b[k] = t / c; } a = b; }
+    this.reg = { z0: zmin, bin, nb, v: a };
+  }
+
+  // kicker + drop-away + landing for each jump, blended into the road profile over a straight trend line
+  applyJumps(h) {
+    for (const jp of this.jumps) {
+      const J = JUMPS[jp.size], L = jp.idx;
+      const s0 = -J.Lu - 20, s1 = J.F + 15 + JUMP_EASE + 20;
+      const i0 = Math.max(0, L + Math.round(s0 / STEP)), i1 = Math.min(this.n - 1, L + Math.round(s1 / STEP));
+      const y0 = h[i0], y1 = h[i1];
+      let y = 0;
+      for (let i = i0; i <= i1; i++) {
+        const s = (i - L) * STEP;
+        const w = smoothstep(s0, s0 + 20, s) * (1 - smoothstep(s1 - 20, s1, s));
+        const trend = y0 + (y1 - y0) * (i - i0) / (i1 - i0);
+        h[i] += (trend + y - h[i]) * w;
+        y += jumpSlope(J, s + STEP / 2) * STEP;
+      }
+    }
+  }
+
+  // nearest index to i (within ±r*4 samples) that is not in a hairpin or a jump zone
+  clearIndex(i, r) {
+    const bad = (j) => {
+      for (let k = -r; k <= r; k++) if (Math.abs(this.curv[clamp(j + k, 0, this.n - 1)]) > 0.02) return true;
+      return this.jumps.some((jp) => { const [a, b] = jumpZone(jp); return j >= a && j <= b; });
+    };
+    for (let k = 0; k < r * 40; k++) for (const j of [i + k, i - k]) if (j > this.startIdx + 30 && j < this.finishIdx - 30 && !bad(j)) return j;
+    return i;
+  }
+
+  // feature stages: like height(), but the road height seen from the terrain is blended with any OTHER leg of the
+  // road nearby (soft Voronoi) so stacked switchback legs get continuous embankments instead of a step between them
+  heightMulti(x, z, mesh) {
+    const b = this.baseH(x, z);
+    const n = this.nearest(x, z);
+    if (!n || n.d >= 30) return b;
+    const i1 = n.i, d1 = n.d;
+    const f = clamp(n.along / STEP, -1, 1);
+    const j1 = clamp(i1 + Math.sign(f), 0, this.n - 1);
+    let r = this.sy[i1] + (this.sy[j1] - this.sy[i1]) * Math.abs(f);
+    const { sx, sz } = this, cx = Math.floor(x / 32), cz = Math.floor(z / 32);
+    let eMax = 0, yMax = 0;
+    for (let ix = cx - 1; ix <= cx + 1; ix++) for (let iz = cz - 1; iz <= cz + 1; iz++) {
+      const arr = this.hash.get(ix * 100003 + iz); if (!arr) continue;
+      for (let q = 0; q < arr.length; q++) {
+        const i = arr[q], gap = Math.abs(i - i1); if (gap <= 10) continue;
+        const dq = Math.hypot(x - sx[i], z - sz[i]); if (dq > 32) continue;
+        const e = smoothstep(10, 22, gap) * Math.exp(-(dq - d1) / 3);
+        if (e > eMax) { eMax = e; yMax = this.sy[i]; }
+      }
+    }
+    if (eMax > 1e-5) r = (r + eMax * yMax) / (1 + eMax);
+    let h = r + (b - r) * smoothstep(10, 30, d1);
+    h -= 0.1 * (1 - smoothstep(10, 14, d1));
+    if (!mesh && d1 < ROAD_HALF) h += 0.1;
+    return h;
+  }
+
   height(x, z, mesh = false) {
+    if (this.multi) return this.heightMulti(x, z, mesh);
     const b = this.baseH(x, z);
     const n = this.nearest(x, z);
     if (!n || n.d >= 30) return b;
@@ -543,6 +788,22 @@ export class Stage {
     def('post', merge([part(new THREE.BoxGeometry(0.14, 0.9, 0.14), '#f5f1e6', 0, 0.45, 0), part(new THREE.BoxGeometry(0.16, 0.2, 0.16), '#e2472f', 0, 0.8, 0)]), false);
     def('body', merge([part(new THREE.CylinderGeometry(0.2, 0.26, 0.75, 6), '#ffffff', 0, 1.1, 0), part(new THREE.BoxGeometry(0.34, 0.75, 0.22), '#3b3f52', 0, 0.38, 0)]));
     def('head', part(new THREE.IcosahedronGeometry(0.19, 0), '#e9b98f', 0, 1.68, 0), false);
+    if (flora === 'volcanic') {
+      // basalt column cluster (hexagonal prisms of different heights)
+      const col6 = (r, h, x, z, hex) => part(new THREE.CylinderGeometry(r, r, h, 6), hex, x, h / 2, z);
+      def('column', merge([col6(0.55, 3.2, 0, 0, '#ffffff'), col6(0.5, 2.4, 0.95, 0.2, '#ececec'), col6(0.5, 4.1, 0.45, 0.85, '#f4f4f4'),
+        col6(0.45, 1.6, -0.6, 0.75, '#e2e2e2'), col6(0.5, 2.9, -0.5, -0.8, '#f0f0f0')]));
+      // dead tree: bare leaning trunk with three crooked limbs
+      const limb = (r, l, ry, rz, y) => { const g = new THREE.CylinderGeometry(r * 0.6, r, l, 5).translate(0, l / 2, 0); g.rotateZ(rz); g.rotateY(ry); return part(g, '#ffffff', 0, y, 0); };
+      def('deadtree', merge([limb(0.2, 4.2, 0, 0.06, 0), limb(0.1, 1.6, 0.3, 0.9, 2.4), limb(0.09, 1.4, 2.6, 0.8, 3.1), limb(0.07, 1.1, 4.4, 0.7, 3.7)]));
+      // cairn: stacked flat stones
+      const stone = (r, sy, y, x, hex) => { const g = new THREE.IcosahedronGeometry(r, 0); g.scale(1, sy, 1); return part(g, hex, x, y, 0); };
+      def('cairn', merge([stone(0.75, 0.45, 0.28, 0, '#ffffff'), stone(0.58, 0.45, 0.72, 0.05, '#e6e6e6'), stone(0.44, 0.5, 1.1, -0.04, '#f4f4f4'),
+        stone(0.32, 0.55, 1.42, 0.02, '#dddddd'), stone(0.2, 0.7, 1.68, 0, '#ffffff')]));
+      // steam vent: ochre sulphur rim around a dark throat, a column of white steam puffs (baked colours)
+      def('vent', merge([part(new THREE.CylinderGeometry(1.0, 1.5, 0.5, 7), '#c9a640', 0, 0.25, 0), part(new THREE.CylinderGeometry(0.55, 0.7, 0.52, 7), '#2a2522', 0, 0.28, 0),
+        stone(0.7, 0.8, 1.2, 0.1, '#f2f2ee'), stone(0.95, 0.75, 2.2, -0.25, '#eaeae6'), stone(1.15, 0.7, 3.4, 0.2, '#f5f5f2'), stone(0.9, 0.6, 4.5, 0.55, '#fafafa')]), false);
+    }
     if (flora === 'coast') {
       // umbrella pine: tall leaning bare trunk (tinted bark) + flat layered canopy (tinted green)
       const lean = (g, a) => { g.rotateZ(a); return g; };
@@ -598,12 +859,12 @@ export class Stage {
           const x = this.sx[i] + this.tz[i] * off * side, z = this.sz[i] - this.tx[i] * off * side;
           const n = this.nearest(x, z);
           if (!n || n.d > ROAD_HALF + 0.8) {
-            const hex = flora === 'forest' ? pick(['#6e8f3a', '#a7a843', '#c98a3a']) : flora === 'desert' ? pick(['#a8a25c', '#8c9a5a', '#c2a268']) : flora === 'coast' ? pick(DRY) : pick(['#eef3f7', '#ffffff', '#5f7a66']);
+            const hex = flora === 'forest' ? pick(['#6e8f3a', '#a7a843', '#c98a3a']) : flora === 'desert' ? pick(['#a8a25c', '#8c9a5a', '#c2a268']) : flora === 'coast' ? pick(DRY) : flora === 'volcanic' ? pick(['#8f7f45', '#6e6a3e', '#a8924e', '#5c5a3c']) : pick(['#eef3f7', '#ffffff', '#5f7a66']);
             const y = this.height(x, z, true);
             if (y > sea + 0.3) add('bush', i, x, y, z, R() * 6, 0.5 + R() * 0.9, 0.5 + R() * 0.8, hex);
           }
         }
-        const tries = flora === 'desert' ? 2 : flora === 'coast' ? 3 : 4;
+        const tries = flora === 'desert' ? 2 : flora === 'coast' || flora === 'volcanic' ? 3 : 4;
         for (let a = 0; a < tries; a++) {
           const off = ROAD_HALF + 6.5 + Math.pow(R(), 1.7) * 130;
           const x = this.sx[i] + this.tz[i] * off * side, z = this.sz[i] - this.tx[i] * off * side;
@@ -611,7 +872,7 @@ export class Stage {
           const dist = n ? n.d : 99;
           if (dist < ROAD_HALF + 6) continue;
           const dens = this.n2(x / 55 + 3, z / 55) * 0.5 + 0.5;
-          const thresh = d.dens ?? (flora === 'desert' ? 0.62 : flora === 'snow' ? 0.42 : flora === 'coast' ? 0.45 : 0.3);
+          const thresh = d.dens ?? (flora === 'desert' ? 0.62 : flora === 'snow' ? 0.42 : flora === 'coast' ? 0.45 : flora === 'volcanic' ? 0.5 : 0.3);
           if (dens < thresh && R() < 0.85) continue;
           const y = this.height(x, z, true) - 0.1, rot = R() * 6.28, s = 0.8 + R() * 0.9;
           const near = dist < 45;
@@ -620,6 +881,18 @@ export class Stage {
             if (q < pCactus) { add('cactus', i, x, y, z, rot, s, s, pick(['#5f8f5a', '#6f9a58', '#4f8060'])); if (near) this.addCollider(x, z, 0.4 * s); }
             else if (q < pMesa) { const w = 2 + R() * 5; if (dist > 9 + w) { add('mesa', i, x, y - 0.3, z, rot, w, (2 + R() * 7) * mesaH, pick(['#c2603f', '#b55238', '#d07248'])); if (near) this.addCollider(x, z, w * 0.95); } }
             else { add('rock', i, x, y, z, rot, 0.6 + R() * 1.6, 0.6 + R() * 1.4, pick(['#b8694a', '#a85a40', '#c98058'])); }
+          } else if (flora === 'volcanic') {
+            const q = R();
+            if (q < 0.26) { const rs = 0.6 + R() * 2.0; add('rock', i, x, y, z, rot, rs, rs * (0.5 + R() * 0.5), pick([d.rock, '#3a3633', '#4a3a30']), 0.08); if (near && rs > 1.2) this.addCollider(x, z, rs * 0.8); }
+            else if (q < 0.4) { add('column', i, x, y - 0.2, z, rot, s * 1.2, s * (0.9 + R() * 0.9), pick(['#3a3836', '#45413d', '#34302e']), 0.06); if (near) this.addCollider(x, z, 1.3 * s); }
+            else if (q < 0.56) { add('deadtree', i, x, y, z, rot, s, s * (0.9 + R() * 0.4), pick(['#6b5f55', '#7a6e62', '#585049']), 0.08); if (near) this.addCollider(x, z, 0.25 * s); }
+            else if (q < 0.72) {
+              const hs = s * (0.8 + R() * 0.4);
+              add('trunk', i, x, y, z, rot, s * 0.8, s, '#ffffff', 0.05); add('conifer', i, x, y, z, rot, s * 0.75, hs, pick(['#2f4a3a', '#364f3c', '#2a4234']), 0.08);
+              if (near) this.addCollider(x, z, 0.3 * s);
+            } else if (q < 0.82) { add('cairn', i, x, y, z, rot, s, s, pick(['#9a948c', '#8a837a', '#aaa39a']), 0.06); if (near) this.addCollider(x, z, 0.6 * s); }
+            else if (q < 0.88) { add('vent', i, x, y - 0.1, z, rot, s, s, '#ffffff', 0.03); }
+            else add('bush', i, x, y + 0.05, z, rot, 0.8 + R() * 0.8, 0.5 + R() * 0.4, pick(['#8f7f45', '#6e6a3e', '#a8924e']));
           } else if (flora === 'coast') {
             if (y < sea + 0.5) continue; // nothing grows in the sea
             const q = R();
@@ -687,6 +960,21 @@ export class Stage {
       }
     }
 
+    // feature stages: a crowd on the outside of every hairpin
+    for (const hp of this.hairpins) {
+      const side = hp.dir > 0 ? -1 : 1; // outside of the turn (lat > 0 is left)
+      const cnt = 5 + Math.floor(R() * 6);
+      for (let q = 0; q < cnt; q++) {
+        const j = clamp(hp.idx + Math.round((R() - 0.5) * 12), 0, this.n - 1), off = (ROAD_HALF + 7 + R() * 4) * side;
+        const x = this.sx[j] + this.tz[j] * off, z = this.sz[j] - this.tx[j] * off;
+        const n = this.nearest(x, z); if (n && n.d < ROAD_HALF + 6) continue;
+        const y = this.height(x, z, true), rot = Math.atan2(this.sx[j] - x, this.sz[j] - z), s = 0.9 + R() * 0.25;
+        add('body', j, x, y, z, rot, s, s, pick(['#e2472f', '#f2b632', '#3d7fc4', '#f4f1e8', '#5aa469', '#8e5bb5', '#ef8a3c']), 0.05);
+        add('head', j, x, y, z, rot, s, s, pick(['#ffffff', '#d9b08c', '#b98562']), 0.04);
+        this.addCollider(x, z, 0.3);
+      }
+    }
+
     for (const name in T) {
       const t = T[name], mat = flatMat();
       for (const it of t.items.values()) {
@@ -733,7 +1021,9 @@ export class Stage {
     const minGap = S(GATE_MIN_GAP), maxGap = S(GATE_MAX_GAP), splitClr = S(GATE_SPLIT_CLEAR);
     const ac = (i) => Math.abs(this.curv[i]);
     const nearSplit = (i) => this.splits.some((s) => Math.abs(i - s) < splitClr);
-    const ok = (i, list) => i >= lo && i <= hi && !nearSplit(i) && list.every((g) => Math.abs(g - i) >= minGap);
+    const zones = this.jumps.map(jumpZone);
+    const inJump = (i) => zones.some(([a, b]) => i >= a && i <= b);
+    const ok = (i, list) => i >= lo && i <= hi && !nearSplit(i) && !inJump(i) && list.every((g) => Math.abs(g - i) >= minGap);
     // nearest admissible index to i within ±r samples (prefers i itself), or -1
     const nudge = (i, list, r) => { for (let k = 0; k <= r; k++) for (const j of [i - k, i + k]) if (ok(j, list)) return j; return -1; };
     // 1) corner apexes: local maxima of |curv| over ±4 samples, tightest first, merged within ~55 m
@@ -745,7 +1035,7 @@ export class Stage {
       if (peak) cand.push(i);
     }
     cand.sort((a, b) => ac(b) - ac(a) || a - b);
-    const g = [];
+    const g = this.hairpins.map((hp) => hp.idx).filter((i) => i >= lo && i <= hi); // a gate at every hairpin apex
     for (const i of cand) { const j = nudge(i, g, 6); if (j >= 0) g.push(j); }
     // 2) fill long stretches (start/finish count as gates), evenly, nudging off split flags
     for (let guard = 0; guard < 200; guard++) {
