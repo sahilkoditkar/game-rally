@@ -87,9 +87,9 @@ const TUNE = {
 const P0 = (o) => ({ cost: 0, medals: 0, ...o });
 export const PARTS = [
   // wing
-  P0({ id: 'wing-lip', slot: 'wing', name: 'Stock lip', blurb: 'A neat roof-edge lip.' }),
+  P0({ id: 'wing-rally', slot: 'wing', name: 'Rally wing', blurb: 'The classic wing on short struts.' }),
+  P0({ id: 'wing-lip', slot: 'wing', name: 'Roof lip', blurb: 'A neat roof-edge lip. Clean and quiet.' }),
   { id: 'wing-duck', slot: 'wing', name: 'Ducktail', blurb: 'A kicked-up tail on the hatch.', cost: 250, medals: 0 },
-  { id: 'wing-rally', slot: 'wing', name: 'Rally wing', blurb: 'The classic wing on short struts.', cost: 400, medals: 0 },
   { id: 'wing-big', slot: 'wing', name: 'Monster wing', blurb: 'A huge winged spoiler on tall struts.', cost: 800, medals: 12 },
   // roof
   P0({ id: 'roof-none', slot: 'roof', name: 'Bare roof', blurb: 'Nothing up top.' }),
