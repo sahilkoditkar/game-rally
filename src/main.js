@@ -12,11 +12,13 @@ import { Dust, Rain } from './fx.js';
 import { Player, CAMS, updateCamera, aimSun } from './player.js';
 import { PAINTS, ACCENTS, DEFAULT_BUILD, normalizeBuild, buildStats } from './carapi.js';
 import { profile, offer, buy as buyItem, earn, countRun, setBuild as setProfileBuild, stageEarnings, rallyEarnings, anythingAffordable, ownsPaint, ownsAccent, EARN, costs } from './economy.js';
-import { renderGarage, garageKey, garagePreview, clearPreview, setGarageTab } from './garage.js';
+import { renderGarage, garageKey, garagePreview, clearPreview, setGarageTab, garageTab, garageCar, setGarageCar } from './garage.js';
 import { setStockLights } from './fx.js';
 import { Rules, GateMarker, roughOf, penaltyHtml } from './rules.js';
 import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults, renderRallyStage, renderRallyResults, earningsBlock } from './hud.js';
-import { renderMenu, renderMute, getViewRegion } from './menu.js';
+import { renderMenu, playTabs, tabEntries, startLabel } from './menu.js';
+import { openSettings as openSettingsPanel, closeSettings, settingsOpen, settingsKey, settingsState, renderSettings } from './settings.js';
+import { defaultFocus, moveFocus, activateFocus } from './nav.js';
 import { medalPoints, medalTimes, medalFor, medalRank, medalUp, rallyStages, rallyPar, parOf, trophyFor, getRallyBest, setRallyBest, medalSummary } from './progress.js';
 import { GhostRecorder, GhostPlayer, loadGhost, saveGhost, pruneDailyGhosts, GHOST_ON_KEY } from './ghost.js';
 import { pose } from './player.js';
@@ -84,13 +86,16 @@ let racers = [players[0]];
 let state = 'boot', paused = false;
 let auto = params.get('auto') === '1';
 let mode = 'solo';
-let sel = null; // selected stage id (menu order includes today's daily stage)
+let sel = null; // the stage the menu shows / START would load (for a rally entry: its first stage)
+// PLAY list model: one tab per region + DAILY; the pick is the tab's selected entry (a stage id or 'rally')
+let pick = { tab: null, entry: null };
+const lastEntry = {}; // remembered entry per tab
 let cdT = 0, cdShown = null, finishT = 0, lastRun = null, hintsT = 0;
 let cond = { night: false, rain: false, sun: 1, ambient: 1 };
 // championship: { region, ids, idx, phase: 'stage' | 'inter' | 'final', totals: [p0, p1], times: [[], []], medals: [[], []], newMedals: [[], []] }
 let rally = null;
 // garage: one car (the Rook) upgraded with credits; the menu car is the showroom (it shows previews live)
-let menuView = 'stages';
+let menuView = 'play';
 // duel: both players race P1's build (same performance and parts); P2 only chooses paint + accent (owned colours)
 const P2_KEY = 'dustline.p2look';
 const p2Look = (() => {
@@ -101,17 +106,19 @@ const p2Look = (() => {
 })();
 const p2Build = () => normalizeBuild({ ...profile.build, paint: p2Look.paint === profile.build.paint ? (PAINTS.find((p) => ownsPaint(p.hex) && p.hex !== profile.build.paint) || PAINTS[1]).hex : p2Look.paint, accent: p2Look.accent });
 const menuIdx = () => (menuView === 'garage' ? Math.min(stage.startIdx + 22, stage.finishIdx - 5) : stage.startIdx);
-function showroom() { players[0].setBuild(garagePreview() || profile.build); }
+// the showroom shows the car being edited: P2's colours while Garage > Style > Car is P2 (duel)
+const showroomCar = () => (menuView === 'garage' && mode === 'duel' && garageCar() === 'p2' ? 'p2' : 'p1');
+function showroom() { players[0].setBuild(garagePreview() || (showroomCar() === 'p2' ? p2Build() : profile.build)); }
 function setView(v) {
   const was = menuView;
-  menuView = v === 'garage' ? 'garage' : 'stages';
+  menuView = v === 'garage' ? 'garage' : 'play'; // 'stages' (the old name) is accepted as PLAY
   if (menuView !== 'garage') clearPreview();
   // the garage parks the car on a clear stretch past the start gate (the gate pillars would block the turntable)
   if (state === 'menu' && was !== menuView && stage) { players[0].place(stage, menuIdx()); players[0].camSnap = false; }
   if (state === 'menu') { showroom(); showMenu(); }
 }
 const garageCtx = () => ({
-  duel: mode === 'duel', p2: p2Look,
+  duel: mode === 'duel', p2: p2Look, p2Build,
   onPreview: () => showroom(),
   onBought: (res) => {
     const s0 = soundFor('c', { pan: 0, gain: 1 });
@@ -120,7 +127,7 @@ const garageCtx = () => ({
     else s0.beep(660, 0.06);
     showroom();
   },
-  onP2: (kind, hex) => { p2Look[kind] = hex; store.set(P2_KEY, p2Look); showMenu(); },
+  onP2: (kind, hex) => { p2Look[kind] = hex; store.set(P2_KEY, p2Look); soundFor('c', { pan: 0, gain: 1 }).beep(660, 0.06); showroom(); showMenu(); },
   refresh: () => { showroom(); showMenu(); },
 });
 // ghost of the best run (solo only): recorded every run, saved on a new stage best, replayed on the next
@@ -189,21 +196,33 @@ function withLoading(def, fn) {
 }
 
 // ---------------------------------------------------------------- screens & layout
+// the overlay on top right now (for focus and the confirm guard): settings > pause > results
+let overlayId = null, overlayAt = 0;
+const CONFIRM_GUARD = 400; // ms: confirm actions are ignored this long after an overlay appears (P2's Enter is a handbrake)
+const guarded = () => performance.now() - overlayAt < CONFIRM_GUARD;
 function setScreen() {
   const racing = state === 'countdown' || state === 'race' || state === 'finish';
   const duel = racers.length === 2, showResults = state === 'finish' && finishT > 1.1;
+  const setOpen = settingsOpen();
   document.body.classList.toggle('duel', duel && racing);
-  document.body.classList.toggle('results', showResults); // the results panels hide the HUD timer block behind them
+  document.body.classList.toggle('results', showResults); // the results panels hide the HUD behind them
   $('menu').classList.toggle('hidden', state !== 'menu');
   $('hud').classList.toggle('hidden', !racing);
-  $('pause').classList.toggle('hidden', !paused);
+  $('settings').classList.toggle('hidden', !setOpen);
+  $('pause').classList.toggle('hidden', !paused || setOpen);
   $('finish').classList.toggle('hidden', !(showResults && !duel && !rally));
   $('duelFinish').classList.toggle('hidden', !(showResults && duel && !rally));
   $('rally').classList.toggle('hidden', !(showResults && rally));
-  // in a rally, pausing offers Resume / Abandon rally only
+  // in a rally, pausing offers Resume / Settings / Abandon rally
   $('restartBtn').classList.toggle('hidden', !!rally);
-  $('pMenuBtn').textContent = rally ? 'Abandon rally' : 'Menu';
+  $('pMenuBtn').textContent = rally ? 'Abandon rally' : 'Quit to menu';
   $('touch').classList.toggle('hidden', !(isTouch && !duel && (state === 'countdown' || state === 'race') && !paused));
+  const ov = setOpen ? 'settings' : paused ? 'pause' : showResults ? (rally ? 'rally' : duel ? 'duelFinish' : 'finish') : null;
+  if (ov !== overlayId) {
+    const back = overlayId === 'settings' && ov === 'pause'; // closing Settings returns focus to Pause › Settings
+    overlayId = ov; overlayAt = performance.now();
+    if (ov && ov !== 'settings' && !back) defaultFocus($(ov));
+  }
   players[1].car.group.visible = duel && racing;
   for (const p of players) {
     p.ui.el.classList.toggle('hidden', !racers.includes(p));
@@ -232,33 +251,87 @@ function layout() {
     // solo menu / results: nudge the car out from under the panel (right on wide screens, up on portrait)
     const side = !duel && (state === 'menu' || (state === 'finish' && finishT > 1.1));
     if (side && W > 720) c.setViewOffset(W, H, -Math.min(W * 0.2, 300), 0, W, H);
-    else if (!duel && state === 'menu') c.setViewOffset(W, H, 0, H * 0.12, W, H);
+    // phone: the menu is a bottom sheet, so lift the car into the top band (about 22 % down the screen)
+    else if (!duel && state === 'menu') c.setViewOffset(W, H, 0, H * MENU_LIFT, W, H);
     else c.clearViewOffset();
     c.updateProjectionMatrix();
   }
 }
+const MENU_LIFT = 0.3;
 window.addEventListener('resize', layout);
 
 function showMenu(scroll = false) {
-  players[1].setBuild(p2Build()); // P2's look (P1's build, P2's paint/accent) for the menu summary
+  players[1].setBuild(p2Build()); // P2's look (P1's build, P2's paint/accent)
   renderMenu({
-    sel, mode, duelAvailable: duelAvailable(), players, muted, scroll,
-    view: menuView, garage: garageCtx(), onView: (v) => setView(v),
-    onSelect: (id) => select(id), onStart: (id) => { select(id); startStage(id); },
-    onRally: (regionId) => startRally(regionId),
-    onMode: (m) => setMode(m),
+    pick, mode, duelAvailable: duelAvailable(), scroll,
+    view: menuView, garage: garageCtx(),
+    onPick: (tab, entry) => setPick(tab, entry), onStart: () => startPick(),
+    onP2: () => openP2Colours(),
   });
 }
 
 function setMode(m) {
   mode = m === 'duel' && duelAvailable() ? 'duel' : 'solo';
   store.set('dustline.mode', mode);
-  if (state === 'menu') showMenu();
+  if (mode !== 'duel') setGarageCar('p1');
+  if (state === 'menu') { showroom(); showMenu(); }
 }
+// PLAY > Duel note "P2 colours ›": Garage > Style with P2 selected
+function openP2Colours() {
+  if (mode !== 'duel') return;
+  setGarageTab('style'); setGarageCar('p2');
+  if (menuView === 'garage') { showroom(); showMenu(); } else setView('garage');
+}
+
+// ---------------------------------------------------------------- PLAY list: tabs = selection
+const tabOfStage = (id) => (isDaily(id) ? 'daily' : regionOf(id));
+const pickStage = (p = pick) => (p.entry === 'rally' ? rallyStages(p.tab)[0] : p.entry);
+const pickKey = (p = pick) => (p.entry === 'rally' ? 'rally:' + p.tab : p.tab === 'daily' ? 'daily' : p.entry);
+// stored 'dustline.stage': a stage id, 'daily', 'rally:<regionId>' or an old numeric index
+function parsePick(v) {
+  if (v == null || v === '') return null;
+  const k = String(v);
+  if (k.startsWith('rally:')) { const r = k.slice(6); return rallyStages(r).length ? { tab: r, entry: 'rally' } : null; }
+  const d = getDef(k);
+  if (!d) return null;
+  return isDaily(d.id) ? { tab: 'daily', entry: dailyDef().id } : { tab: tabOfStage(d.id), entry: d.id };
+}
+function setPick(tab, entry, { persist = true, quiet = false } = {}) {
+  const ents = tabEntries(tab);
+  if (!ents.length) return;
+  if (entry == null) entry = lastEntry[tab] ?? ents[0];
+  if (!ents.includes(entry)) entry = ents[0];
+  const same = pick.tab === tab && pick.entry === entry;
+  pick = { tab, entry }; lastEntry[tab] = entry;
+  sel = pickStage();
+  if (persist) store.set('dustline.stage', pickKey());
+  if (state !== 'menu' || quiet) return;
+  if (!same) soundFor('c', { pan: 0, gain: 1 }).beep(520, 0.03);
+  showMenu(true);
+  previewSel();
+}
+// the attract preview follows the selection; debounced so rapid tabbing doesn't build every stage on the way
+let previewTm = 0;
+function previewSel() {
+  clearTimeout(previewTm);
+  previewTm = setTimeout(() => {
+    const def = getDef(sel);
+    if (state !== 'menu' || !def || (stage && stage.def.id === def.id)) return;
+    withLoading(def, () => { if (state === 'menu' && sel === def.id) { loadStage(def); showroom(); players[0].place(stage, menuIdx()); players[0].camSnap = false; } });
+  }, 150);
+}
+function pickEntry(dir) { const e = tabEntries(pick.tab), i = Math.max(0, e.indexOf(pick.entry)); setPick(pick.tab, e[(i + dir + e.length) % e.length]); }
+function pickTab(dir) { const t = playTabs(), i = Math.max(0, t.indexOf(pick.tab)); setPick(t[(i + dir + t.length) % t.length], null); }
+function startPick() { if (pick.entry === 'rally') startRally(pick.tab); else startStage(pick.entry); }
 
 // ---------------------------------------------------------------- game flow
 function startStage(key) {
   const def = getDef(key) || getDef(sel);
+  if (settingsOpen()) closeSettings();
+  clearTimeout(previewTm);
+  // the menu comes back on what was played last
+  if (rally) setPick(rally.region, 'rally', { quiet: true });
+  else setPick(tabOfStage(def.id), isDaily(def.id) ? dailyDef().id : def.id, { quiet: true });
   withLoading(def, () => {
     sel = def.id;
     loadStage(def);
@@ -284,44 +357,32 @@ function startStage(key) {
 
 function toMenu() {
   paused = false;
+  if (settingsOpen()) closeSettings();
   for (const p of players) { p.rules = null; p.marker.active = false; p.marker.show(false); }
   rally = null;
   clearGhost();
   state = 'menu';
   racers = [players[0]];
   $('countdown').textContent = '';
+  sel = pickStage();
   const def = getDef(sel);
   clearPreview();
-  const enter = () => { loadStage(def); players[0].setBuild(profile.build); players[0].lights.setEnabled(cond.night); players[0].place(stage, menuIdx()); dust.clear(); };
+  const enter = () => { loadStage(def); showroom(); players[0].lights.setEnabled(cond.night); players[0].place(stage, menuIdx()); dust.clear(); };
   if (built.has(def.id)) enter(); else withLoading(def, () => { if (state === 'menu') enter(); });
   showMenu(true);
   setScreen();
 }
-
-function select(id) {
-  const def = getDef(id);
-  if (!def || (def.id === sel && stage && stage.def.id === def.id)) return;
-  sel = def.id;
-  store.set('dustline.stage', isDaily(sel) ? 'daily' : sel);
-  if (state !== 'menu') return;
-  showMenu(true);
-  withLoading(def, () => { if (state === 'menu' && sel === def.id) { loadStage(def); players[0].place(stage, menuIdx()); } });
-}
-// ←/→ walk the whole menu order; ↑/↓ (Q/E) jump to the same slot in the neighbouring region
-function stepStage(dir) { const ids = menuIds(), i = ids.indexOf(sel); select(ids[(i + dir + ids.length) % ids.length]); }
-function stepRegion(dir) {
-  const nav = [...REGIONS.map((r) => r.id), 'daily'], cur = regionOf(sel);
-  const r0 = REGIONS.find((r) => r.id === cur), pos = r0 ? r0.stages.indexOf(sel) : 0;
-  const nr = nav[(nav.indexOf(cur) + dir + nav.length) % nav.length];
-  if (nr === 'daily') { select(dailyDef().id); return; }
-  const r = REGIONS.find((x) => x.id === nr);
-  select(r.stages[Math.min(Math.max(pos, 0), r.stages.length - 1)]);
-}
+function toGarage() { toMenu(); setView('garage'); }
 
 function setPaused(p) {
   if (!(state === 'countdown' || state === 'race')) p = false;
+  if (!p && settingsOpen()) closeSettings();
   paused = p;
-  if (p) { $('pauseStage').textContent = stage.def.name; keys.clear(); }
+  if (p) {
+    $('pauseKicker').textContent = rally ? `Paused \u00b7 Rally ${rally.idx + 1}/${rally.ids.length}` : 'Paused';
+    $('pauseStage').textContent = stage.def.daily ? 'Today\u2019s stage' : stage.def.name;
+    keys.clear();
+  }
   setScreen();
 }
 
@@ -375,7 +436,7 @@ function playerFinish(p) {
   const snd = soundOf(p);
   snd.beep(988, 0.25); setTimeout(() => snd.beep(1318, 0.4), 160);
   showNotice(p, 'FINISH', 1.2, 'alt');
-  const nextName = getDef(nextId(stage.def.id)).name;
+  const nextName = isDaily(stage.def.id) ? null : getDef(nextId(stage.def.id)).name; // no Next from the Daily Stage
   if (racers.length === 1) {
     const id = stage.def.id, prev = getBest(id), t = p.time, s = p.splits.slice(0, 2);
     const isBest = !prev || t < prev.t;
@@ -395,7 +456,7 @@ function playerFinish(p) {
       if (rec) lastRun.ghostSaved = saveGhost(id, rec) > 0;
     }
     renderFinish(stage.def, lastRun, nextName);
-    const hint = firstEver ? `You earned ${e.total} CR \u2014 spend it in the <b>Garage</b> (V)` : anythingAffordable() ? 'Something new is affordable in the <b>Garage</b> (V)' : '';
+    const hint = firstEver ? 'Spend credits in the' : anythingAffordable() ? 'Something new is affordable \u2014' : '';
     lastRun.hint = hint;
     $('finEarn').innerHTML = earningsBlock(e, profile.credits, hint);
     $('finPen').innerHTML = penaltyHtml(pen);
@@ -448,7 +509,7 @@ function rallyStageDone() {
       const re = rallyEarnings(trophy);
       earn(re.total);
       const both = { total: lastRun.earn.total + re.total, lines: [...lastRun.earn.lines, ...re.lines] };
-      earnHtml = earningsBlock(both, profile.credits, anythingAffordable() ? 'Something new is affordable in the <b>Garage</b> (V)' : '');
+      earnHtml = earningsBlock(both, profile.credits, anythingAffordable() ? 'Something new is affordable \u2014' : '');
     }
     renderRallyResults({
       earnHtml,
@@ -464,107 +525,198 @@ function rallyContinue() {
   startStage(rally.ids[rally.idx]);
 }
 
-// ---------------------------------------------------------------- actions & input
-function onAction(a, who = 0) {
-  resumeAudio();
-  if (a === 'mute') {
-    muted = !muted; for (const s of allSounds()) s.setMuted(muted);
-    store.set('dustline.muted', muted); renderMute(muted); return;
-  }
-  if (a === 'ghost') {
-    ghostOn = !ghostOn; store.set(GHOST_ON_KEY, ghostOn); renderGhostBtn();
-    if (ghost) ghost.setVisible(ghostOn);
-    if (state !== 'menu' && racers.length === 1) showNotice(racers[0], ghostOn ? 'GHOST ON' : 'GHOST OFF', 0.9, 'alt');
-    return;
-  }
-  if (a === 'camera') {
-    const p = racers[who];
-    if (state !== 'menu' && p) { p.camMode = (p.camMode + 1) % CAMS.length; showNotice(p, CAMS[p.camMode].name + ' CAM', 0.9, 'alt'); }
-    return;
-  }
-  if (state === 'menu' && menuView === 'garage' && ['left', 'right', 'up', 'down', 'gact', 'gtab'].includes(a)) {
-    // garage: ↑/↓ rows, ←/→ options (Style), Space buy/fit, Q/E Tune/Style; Enter still starts the race
-    garageKey(a === 'gact' ? 'activate' : a === 'gtab' ? 'tab' : a);
-  } else if (state === 'menu') {
-    if (a === 'left') stepStage(-1);
-    else if (a === 'right') stepStage(1);
-    else if (a === 'up') stepRegion(-1);
-    else if (a === 'down') stepRegion(1);
-    else if (a === 'confirm') startStage(sel);
-    else if (a === 'solo' || a === 'duel') setMode(a);
-    else if (a === 'rally') startRally(getViewRegion() || regionOf(sel));
-    else if (a === 'view') setView(menuView === 'garage' ? 'stages' : 'garage');
-  } else if (paused) {
-    if (a === 'pause') setPaused(false);
-  } else if (state === 'countdown' || state === 'race') {
-    if (a === 'pause') setPaused(true);
-    else if (a === 'reset' && state === 'race' && racers[who] && !racers[who].done) resetPlayer(racers[who]);
-  } else if (state === 'finish' && rally) {
-    // no retries inside a rally: Enter continues (or leaves after the final results), R restarts a finished rally
-    if (a === 'confirm') { if (rally.phase === 'inter') rallyContinue(); else if (rally.phase === 'final') toMenu(); }
-    else if ((a === 'retry' || (a === 'reset' && who === 0)) && rally.phase === 'final') startRally(rally.region);
-  } else if (state === 'finish') {
-    if (a === 'retry' || (a === 'reset' && who === 0)) startStage(stage.def.id);
-    else if (a === 'next') { const n = nextId(stage.def.id); sel = n; store.set('dustline.stage', n); startStage(n); }
-    else if (a === 'confirm' || a === 'pause') toMenu();
-  }
+// ---------------------------------------------------------------- settings overlay
+const settingsCtx = (from) => ({
+  from,
+  muted: () => muted, ghostOn: () => ghostOn,
+  // Touch on touch-only devices, Gamepad when a pad is connected, otherwise Keyboard
+  defaultCtl: () => (isTouch && !hasFinePointer ? 'touch' : connectedPads().length ? 'gamepad' : 'keyboard'),
+  onMute: () => toggleMute(), onGhost: () => toggleGhost(),
+  onClose: () => setScreen(), // from Pause, closing shows the pause panel again (still paused)
+});
+function openSettings(opener) {
+  if (settingsOpen() || !(state === 'menu' || paused)) return false;
+  openSettingsPanel(settingsCtx(paused ? 'pause' : 'menu'), opener || null);
+  setScreen();
+  return true;
+}
+$('gearBtn').addEventListener('click', () => openSettings($('gearBtn')));
+$('pSettingsBtn').addEventListener('click', () => openSettings($('pSettingsBtn')));
+$('settings').addEventListener('click', (e) => {
+  if (e.target === $('settings') || (e.target.closest && e.target.closest('[data-act=close]'))) closeSettings();
+});
+
+// menu toast: M / G give feedback in the menu now that their buttons live in Settings
+let toastTm = 0;
+function menuToast(text) {
+  const t = $('menuToast');
+  t.textContent = text; t.classList.add('show');
+  clearTimeout(toastTm); toastTm = setTimeout(() => t.classList.remove('show'), 1000);
+}
+function toggleMute() {
+  muted = !muted; for (const s of allSounds()) s.setMuted(muted);
+  store.set('dustline.muted', muted);
+  if (settingsOpen()) renderSettings();
+  else if (state === 'menu') menuToast(muted ? 'SOUND OFF' : 'SOUND ON');
+}
+function toggleGhost() {
+  ghostOn = !ghostOn; store.set(GHOST_ON_KEY, ghostOn);
+  if (ghost) ghost.setVisible(ghostOn);
+  if (settingsOpen()) renderSettings();
+  else if (state === 'menu') menuToast(ghostOn ? 'GHOST ON' : 'GHOST OFF');
+  else if (racers.length === 1 && !paused) showNotice(racers[0], ghostOn ? 'GHOST ON' : 'GHOST OFF', 0.9, 'alt');
 }
 
-const KEYMAP = { KeyM: 'mute', KeyG: 'ghost', KeyC: 'camera', Escape: 'pause', KeyP: 'pause', KeyR: 'reset', KeyN: 'next', Enter: 'confirm', NumpadEnter: 'confirm' };
-const MENUKEYS = {
-  ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
-  ArrowUp: 'up', KeyQ: 'up', ArrowDown: 'down', KeyE: 'down', Space: 'confirm', Digit1: 'solo', Digit2: 'duel', KeyT: 'rally', KeyV: 'view',
-};
-bindKeyboard((e) => {
-  let a = KEYMAP[e.code], who = 0;
-  if (racers.length === 2 && (state === 'countdown' || state === 'race')) {
-    if (e.code === 'Slash' || e.code === 'Backspace') { a = 'reset'; who = 1; }
-    if (e.code === 'Period') { a = 'camera'; who = 1; }
-    if (e.code === 'Enter' || e.code === 'NumpadEnter') a = null; // P2 handbrake
+// ---------------------------------------------------------------- actions & input
+// one screen at a time decides what a key means (3.5): Enter/Space/A activate, Esc/B go back (in PLAY: Settings)
+function screenName() {
+  if (settingsOpen()) return 'settings';
+  if (state === 'menu') return menuView === 'garage' ? 'garage' : 'play';
+  if (paused) return 'pause';
+  if (state === 'countdown' || state === 'race') return 'race';
+  if (state === 'finish') {
+    if (finishT <= 1.1) return 'finishing';
+    if (rally) return rally.phase === 'inter' ? 'rallyinter' : 'rallyfinal';
+    return racers.length === 2 ? 'duelres' : 'finish';
   }
-  if (state === 'menu' && MENUKEYS[e.code]) a = MENUKEYS[e.code];
-  if (state === 'menu' && menuView === 'garage') { if (e.code === 'Space') a = 'gact'; if (e.code === 'KeyQ' || e.code === 'KeyE') a = 'gtab'; }
-  if (a) onAction(a, who);
+  return 'none';
+}
+function doRetry() { if (state !== 'finish') return; if (rally) { if (rally.phase === 'final') startRally(rally.region); } else startStage(stage.def.id); }
+function doNext() {
+  if (state !== 'finish' || rally || isDaily(stage.def.id)) return;
+  startStage(nextId(stage.def.id));
+}
+const OVERLAY_OF = { pause: 'pause', finish: 'finish', duelres: 'duelFinish', rallyinter: 'rally', rallyfinal: 'rally' };
+
+// a: up down left right | confirm (Enter) | space | activate (pad A) | back (Esc, P, pad B) | start (pad Start) | settings (pad Y)
+//    tabprev tabnext (Q E) | lb rb | view (V, pad Select) | solo duel | mute ghost | retry (R) | next (N, pad X) | camera (C) | reset (pad Y in race)
+function onAction(a, who = 0) {
+  resumeAudio();
+  if (a === 'mute') { toggleMute(); return; }
+  if (a === 'ghost') { toggleGhost(); return; }
+  const sc = screenName();
+  if (sc === 'settings') {
+    if (a === 'confirm' || a === 'space' || a === 'activate') settingsKey('activate');
+    else if (a === 'back' || a === 'start') settingsKey('back');
+    else if (a === 'lb' || a === 'tabprev') settingsKey('tabprev');
+    else if (a === 'rb' || a === 'tabnext') settingsKey('tabnext');
+    else if (['up', 'down', 'left', 'right'].includes(a)) settingsKey(a);
+    return;
+  }
+  if (sc === 'play') {
+    if (a === 'up') pickEntry(-1);
+    else if (a === 'down') pickEntry(1);
+    else if (a === 'left' || a === 'tabprev' || a === 'lb') pickTab(-1);
+    else if (a === 'right' || a === 'tabnext' || a === 'rb') pickTab(1);
+    else if (a === 'confirm' || a === 'space' || a === 'activate' || a === 'start') startPick();
+    else if (a === 'back' || a === 'settings') openSettings(null);
+    else if (a === 'view') setView('garage');
+    else if (a === 'solo' || a === 'duel') setMode(a);
+    return;
+  }
+  if (sc === 'garage') {
+    if (['up', 'down', 'left', 'right'].includes(a)) garageKey(a);
+    else if (a === 'space' || a === 'activate') garageKey('activate');
+    else if (a === 'tabprev' || a === 'lb') { if (garageTab() !== 'tune') garageKey('tab'); }
+    else if (a === 'tabnext' || a === 'rb') { if (garageTab() !== 'style') garageKey('tab'); }
+    else if (a === 'confirm' || a === 'start') startPick();
+    else if (a === 'back' || a === 'view') setView('play');
+    else if (a === 'settings') openSettings(null);
+    else if (a === 'solo' || a === 'duel') setMode(a);
+    return;
+  }
+  if (sc === 'race') {
+    if (a === 'back' || a === 'start') setPaused(true);
+    else if ((a === 'retry' || a === 'reset') && state === 'race' && racers[who] && !racers[who].done) resetPlayer(racers[who]);
+    else if (a === 'camera') { const p = racers[who]; if (p) { p.camMode = (p.camMode + 1) % CAMS.length; showNotice(p, CAMS[p.camMode].name + ' CAM', 0.9, 'alt'); } }
+    return;
+  }
+  if (sc === 'pause') {
+    const el = $('pause');
+    if (a === 'up' || a === 'left') moveFocus(el, -1);
+    else if (a === 'down' || a === 'right') moveFocus(el, 1);
+    else if (a === 'confirm' || a === 'space' || a === 'activate') activateFocus(el);
+    else if (a === 'back' || a === 'start') setPaused(false);
+    return;
+  }
+  const el = $(OVERLAY_OF[sc] || 'finish');
+  if (!OVERLAY_OF[sc]) return; // 'finishing': the panel is not up yet
+  if (a === 'up' || a === 'left') { moveFocus(el, -1); return; }
+  if (a === 'down' || a === 'right') { moveFocus(el, 1); return; }
+  if (guarded()) return; // fresh presses only, 400 ms after the panel appears
+  if (a === 'confirm' || a === 'activate') activateFocus(el);
+  else if (a === 'start') { defaultFocus(el); activateFocus(el); } // Start = the primary button
+  else if (sc === 'rallyinter') return; // Abandon is mouse / focus only (destructive)
+  else if (a === 'back') toMenu();
+  else if (a === 'retry' || (a === 'settings' && (sc === 'finish' || sc === 'duelres'))) doRetry();
+  else if (a === 'next' && (sc === 'finish' || sc === 'duelres')) doNext();
+  else if (a === 'view') toGarage();
+}
+
+const KEYS = {
+  ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+  Enter: 'confirm', NumpadEnter: 'confirm', Space: 'space', Escape: 'back', KeyP: 'back', KeyQ: 'tabprev', KeyE: 'tabnext',
+  KeyV: 'view', Digit1: 'solo', Digit2: 'duel', KeyM: 'mute', KeyG: 'ghost', KeyR: 'retry', KeyN: 'next', KeyC: 'camera',
+};
+const NAV_KEYS = new Set(['up', 'down', 'left', 'right', 'tabprev', 'tabnext']);
+bindKeyboard((e) => {
+  const c = e.code, sc = screenName();
+  if (sc === 'race' && racers.length === 2) {
+    if (c === 'Slash' || c === 'Backspace') { onAction('reset', 1); return; }
+    if (c === 'Period') { onAction('camera', 1); return; }
+    if (c === 'Enter' || c === 'NumpadEnter') return; // P2 handbrake
+  }
+  const a = KEYS[c];
+  if (!a) return;
+  if (sc !== 'race' && NAV_KEYS.has(a)) document.body.classList.add('kbnav');
+  onAction(a, 0);
 });
-bindTouch($('touch'), { onPress: resumeAudio, onReset: () => onAction('reset') });
-// gamepad 0 -> P1, gamepad 1 -> P2 (in solo, the first pad drives)
+window.addEventListener('pointerdown', () => document.body.classList.remove('kbnav'), { passive: true });
+bindTouch($('touch'), { onPress: resumeAudio, onReset: () => onAction('retry') });
+// gamepads: 0 -> P1, 1 -> P2 in a race; pad 0 alone drives the menus and panels
+const PAD = { 12: 'up', 13: 'down', 14: 'left', 15: 'right', 4: 'lb', 5: 'rb', 0: 'activate', 1: 'back', 2: 'next', 3: 'settings', 9: 'start', 8: 'view' };
 const onPadEdge = (k, b) => {
-  if (b === 9) onAction(state === 'menu' || state === 'finish' ? 'confirm' : 'pause');
-  if (state === 'menu') { if (b === 0) onAction(menuView === 'garage' ? 'gact' : 'confirm'); if (b === 4 || b === 5) onAction(menuView === 'garage' ? 'gtab' : b === 4 ? 'up' : 'down'); if (b === 8) onAction('view'); if (b === 14) onAction('left'); if (b === 15) onAction('right'); if (b === 12) onAction('up'); if (b === 13) onAction('down'); }
-  if (b === 3) onAction('reset', k);
-  if (b === 1 && state === 'finish') onAction('retry');
+  const sc = screenName();
+  if (sc === 'race') {
+    if (b === 3) onAction('reset', k);
+    else if (b === 9) onAction('start', k);
+    return;
+  }
+  if (k !== 0 || !(b in PAD)) return;
+  if (sc === 'play' && b === 1) return; // B has no level to go back to in PLAY (Y opens Settings)
+  if (b >= 12 || b === 4 || b === 5) document.body.classList.add('kbnav');
+  onAction(PAD[b], 0);
 };
 document.addEventListener('visibilitychange', () => { if (document.hidden && (state === 'race' || state === 'countdown')) setPaused(true); });
 window.addEventListener('pointerdown', resumeAudio, { passive: true });
 window.addEventListener('gamepadconnected', () => { if (state === 'menu') showMenu(); });
 window.addEventListener('gamepaddisconnected', () => { if (state === 'menu') { if (!duelAvailable()) setMode('solo'); showMenu(); } });
 document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('button'); if (b && e.detail > 0) b.blur(); });
+// keyboard-generated clicks (a focused button + Enter) on a panel that just appeared count as confirms too
+document.addEventListener('click', (e) => {
+  if (e.detail === 0 && overlayId && overlayId !== 'settings' && guarded() && e.target.closest && e.target.closest('.overlay')) { e.stopPropagation(); e.preventDefault(); }
+}, true);
 
-$('startBtn').addEventListener('click', () => onAction('confirm'));
-$('muteBtn').addEventListener('click', () => onAction('mute'));
-$('ghostBtn').addEventListener('click', () => onAction('ghost'));
-function renderGhostBtn() {
-  const b = $('ghostBtn');
-  b.textContent = ghostOn ? 'Ghost on' : 'Ghost off';
-  b.setAttribute('aria-pressed', String(ghostOn));
-}
-$('pauseBtn').addEventListener('click', () => onAction('pause'));
+$('startBtn').addEventListener('click', () => { if (state === 'menu') startPick(); });
+$('pauseBtn').addEventListener('click', () => { if (state === 'countdown' || state === 'race') setPaused(!paused); });
 $('resumeBtn').addEventListener('click', () => setPaused(false));
-$('restartBtn').addEventListener('click', () => startStage(stage.def.id));
+$('restartBtn').addEventListener('click', () => { if (paused && !rally) startStage(stage.def.id); });
 $('pMenuBtn').addEventListener('click', toMenu);
-$('retryBtn').addEventListener('click', () => onAction('retry'));
-$('nextBtn').addEventListener('click', () => onAction('next'));
+$('retryBtn').addEventListener('click', doRetry);
+$('nextBtn').addEventListener('click', doNext);
 $('fMenuBtn').addEventListener('click', toMenu);
-$('dfRematch').addEventListener('click', () => onAction('retry'));
-$('dfNext').addEventListener('click', () => onAction('next'));
+$('dfRematch').addEventListener('click', doRetry);
+$('dfNext').addEventListener('click', doNext);
 $('dfMenu').addEventListener('click', toMenu);
+$('finish').addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-act=garage]')) toGarage(); });
 $('rally').addEventListener('click', (e) => {
   const act = e.target.closest && e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
   if (act === 'continue') rallyContinue();
   else if (act === 'abandon' || act === 'menu') toMenu();
   else if (act === 'again' && rally) startRally(rally.region);
+  else if (act === 'garage') toGarage();
 });
-for (const b of document.querySelectorAll('.seg-btn[data-mode]')) b.addEventListener('click', () => onAction(b.dataset.mode));
+for (const b of document.querySelectorAll('.seg-btn[data-mode]')) b.addEventListener('click', () => setMode(b.dataset.mode));
 for (const b of document.querySelectorAll('.view-btn')) b.addEventListener('click', () => setView(b.dataset.view));
 
 // ---------------------------------------------------------------- simulation
@@ -624,6 +776,7 @@ function updateCountdown(dt) {
 
 function renderPane(p) {
   for (const q of players) q.marker.setVisibleFor(q === p && (state === 'race' || state === 'countdown'));
+  p.marker.fit(p.cam);
   aimSun(p, sun, sunDir);
   dust.layout(p.cam.position);
   rain.layout(p.cam.position);
@@ -680,6 +833,7 @@ function frame(now) {
   for (const p of players) {
     p.marker.update(running ? dt : 0);
     if (p.penFlashT > 0) p.penFlashT -= dt;
+    if (p.roughHold > 0) p.roughHold -= dt;
     // deep rough: a shake scaled by rough x speed, and the OFF ROAD indicator (with hysteresis); the verge stays calm
     p.rough = racers.includes(p) && state !== 'menu' ? roughOf(p.car) : 0;
     if (running && p.rough > 0.05 && p.car.grounded !== false) p.shake = Math.max(p.shake, p.rough * Math.min(1, p.car.speed / 22) * 0.42);
@@ -710,7 +864,8 @@ function frame(now) {
     updatePanes(racers, stage, state, rally ? { n: rally.idx + 1, of: rally.ids.length, totals: rally.base } : null, // base = totals before this stage, so the HUD never double counts
       ghost && ghostOn && state === 'race' ? ghostDelta : undefined);
     if (state === 'race' && !paused) hintsT += dt;
-    $('hints').classList.toggle('show', state === 'race' && racers.length === 1 && hintsT < 6);
+    // key hints: only for the first few runs (the full list lives in Settings > Controls)
+    $('hints').classList.toggle('show', state === 'race' && racers.length === 1 && hintsT < 6 && profile.stats.runs < 3);
   }
   const active = state !== 'menu' && state !== 'boot' && !paused;
   for (const s of allSounds()) {
@@ -750,8 +905,20 @@ window.__game = {
   get earnTable() { return EARN; },
   costs,
   setView,
+  get view() { return menuView; },
   setGarageTab(t) { setGarageTab(t); if (state === 'menu') showMenu(); },
-  selectStage(key) { const d = getDef(key); if (!d) return false; if (state === 'menu') select(d.id); else sel = d.id; return d.id; },
+  setGarageCar(c) { setGarageCar(c); if (state === 'menu') { showroom(); showMenu(); } return garageCar(); },
+  // selects a stage in the PLAY list (switching to its tab); 'daily' or an id
+  selectStage(key) { const d = getDef(key); if (!d) return false; setPick(tabOfStage(d.id), isDaily(d.id) ? dailyDef().id : d.id); return d.id; },
+  // selects a list entry: (tab, entry) with entry a stage id, 'rally' or null (the tab's remembered entry)
+  selectEntry(tab, entry = null) { setPick(tab, entry); return { ...pick }; },
+  get pick() { return { ...pick, key: pickKey(), label: startLabel(pick, mode === 'duel').join(' \u00b7 ') }; },
+  openSettings: () => openSettings(null),
+  closeSettings: () => closeSettings(),
+  get settings() { return { ...settingsState(), sound: !muted, ghost: ghostOn }; },
+  get screen() { return screenName(); },
+  padPress: (k, b) => onPadEdge(k, b), // drive the gamepad edge handler (tests)
+  get muted() { return muted; },
   setMode,
   get time() { return players[0].time; },
   get times() { return racers.map((p) => p.time); },
@@ -760,18 +927,17 @@ window.__game = {
 
 function boot() {
   pruneDailyGhosts();
-  renderGhostBtn();
-  const ps = params.get('stage');
-  const saved = store.get('dustline.stage', null);
-  // ?stage= takes an id, 'daily' or a 0-based index; the saved selection may be an id, 'daily' or an old numeric index
-  sel = (getDef(ps != null ? ps : saved != null ? saved : 0) || getDef(0)).id;
+  // ?rally=<id> preselects that rally; ?stage= takes an id, 'daily' or a 0-based index; the saved selection
+  // ('dustline.stage') may be a stage id, 'daily', 'rally:<regionId>' or an old numeric index
+  const pr = params.get('rally'), ps = params.get('stage');
+  const first = REGIONS[0].stages[0];
+  const p0 = (pr && rallyStages(pr).length ? { tab: pr, entry: 'rally' } : null) || parsePick(ps) || parsePick(store.get('dustline.stage', null)) || parsePick(first);
+  setPick(p0.tab, p0.entry, { persist: !params.get('stage') && !pr, quiet: true });
   mode = (params.get('mode') || store.get('dustline.mode', 'solo')) === 'duel' && duelAvailable() ? 'duel' : 'solo';
   loadStage(getDef(sel));
   players[0].setBuild(profile.build); players[0].lights.setEnabled(cond.night);
   players[0].place(stage, stage.startIdx);
-  const pr = params.get('rally');
-  if (pr && params.get('start') === '1' && rallyStages(pr).length) startRally(pr);
-  else if (params.get('start') === '1') startStage(sel);
+  if (params.get('start') === '1') startPick();
   else toMenu();
   $('loading').classList.add('fade');
   requestAnimationFrame(frame);

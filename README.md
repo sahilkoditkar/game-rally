@@ -17,14 +17,19 @@ nothing is loaded from the network.
 | Handbrake | `Space` | A | HAND |
 | Reset onto road | `R` | Y | RESET |
 | Camera (chase / high / top) | `C` | | |
-| Mute | `M` | | |
-| Ghost on / off | `G` | | Ghost button |
-| Menu: Stages / Garage view | `V` | | tabs |
 | Pause | `Esc` | Start | ‖ button |
-| Menu: choose stage / start | `←` `→` / `Enter` | d-pad ◀ ▶ / A | tap |
-| Menu: previous / next region | `↑` `↓` or `Q` `E` | d-pad ▲ ▼ | tabs |
-| Menu: start the region's rally | `T` | | START RALLY |
-| Menu: Solo / Duel | `1` / `2` | | tap |
+| Sound / ghost on or off | `M` / `G` | | Settings |
+| Settings (sound, ghost, controls) | `Esc` in Play | Y in the menu | gear button |
+| Menu: choose an entry / start it | `↑` `↓` / `Enter` | d-pad ▲ ▼ / A | tap, tap again |
+| Menu: previous / next tab (region or Daily) | `←` `→` or `Q` `E` | d-pad ◀ ▶, LB / RB | tabs |
+| Menu: Play / Garage | `V` | Select | tabs |
+| Menu: Solo / Duel | `1` / `2` | | SOLO / DUEL pill |
+| Results: retry / continue, next stage, menu | `Enter`, `N`, `Esc` | A, X, B | buttons |
+
+The full list (keyboard, gamepad and touch) is in **Settings › Controls**, opened from the gear in the
+menu, `Esc` on the Play view, gamepad Y, or **Settings** in the pause panel. On every result panel `Enter`
+(or A) presses the highlighted button (Retry, Rematch, Continue, Rally again) and `Esc` (or B) goes to the
+menu; presses in the first 400 ms after a panel appears are ignored, so a held handbrake can't skip it.
 
 ### Rules
 
@@ -40,7 +45,7 @@ and duel results. The numbers live in `src/rules.js`:
 
 Resets in the first 3 s after GO are free, and one incident never charges two resets within 1.5 s.
 A run with no penalties earns a **CLEAN RUN** badge and +40 CR. Deep rough slows you down, shakes the
-camera and throws dark clods, and an OFF ROAD sign shows by the speedometer.
+camera and throws dark clods, and an OFF ROAD sign shows under the progress bar.
 
 ### Medals
 
@@ -52,9 +57,9 @@ the HUD shows the best medal still in reach.
 
 ### Rallies
 
-Each region is also a rally: its three stages back to back on one cumulative clock. Start one from
-the region view (**START RALLY**, or `T`). Between stages a panel shows the stage time and medal and
-your total against par; `Enter` continues. Retries are off during a rally (`R` still puts the car
+Each region is also a rally: its three stages back to back on one cumulative clock. It is the fourth
+entry in each region's list (**RALLY**, one `↓` below the stages): select it and press **START RALLY**.
+Between stages a panel shows the stage time and medal and your total against par; `Enter` continues. Retries are off during a rally (`R` still puts the car
 back on the road), and pausing offers Resume / Abandon rally. Stage times set in a rally count
 towards stage bests and medals. The final results award a rally trophy (same factors applied to the
 summed par) and keep your best total per region. Rallies also work in Duel, where the winner is
@@ -77,7 +82,7 @@ pays out. The numbers live in one table (`EARN` in `src/economy.js`):
 
 Duel and abandoned runs earn nothing. The finish panel itemises every payout.
 
-Open the **Garage** (`V`) to spend them:
+Open the **Garage** (the GARAGE tab, or `V`) to spend them. Your credits sit in the menu's top bar:
 
 - **Tune** has four upgrade lines (Engine, Tyres, Brakes, Suspension), each with three levels at 400 / 900 / 1,600 CR.
   Higher levels also need 8 and 18 medal points. The stat bars preview what the highlighted upgrade adds.
@@ -86,21 +91,22 @@ Open the **Garage** (`V`) to spend them:
   Locked items say why ("needs 12 medal points", "needs Tyres: Rally compound", "120 CR short").
 
 Purchases of 900 CR and up need a second press to confirm. In the Garage, `↑` `↓` choose a row,
-`←` `→` choose an option, `Space` buys or fits it, and `Q` / `E` switch Tune and Style. `Enter` still starts the race.
-The Garage tab shows a dot when something is affordable. In Duel both cars use your build (same
-performance and parts); Player 2 picks their own paint and accent from the colours you own.
+`←` `→` choose an option, `Space` buys or fits it, `Q` / `E` switch Tune and Style and `Esc` goes back to Play.
+`Enter` still starts the race. The Garage tab shows a dot when something is affordable. In Duel both cars
+use your build (same performance and parts); Player 2 picks their own paint and accent from the colours
+you own in **Garage › Style**, whose first row (`CAR  P1 | P2`) switches the car being edited and shown.
 
 ### Ghost
 
 In solo, every run is recorded. When a run sets a new best on a stage, it is saved as that stage's ghost:
 a translucent car that replays your best run on the next attempt (rallies included), with a live
-**GHOST ±s** delta under the timer comparing you at the same point on the road. Toggle with `G` or
-the menu's Ghost button; `?ghost=0` disables it. There are no ghosts in Duel. Ghosts take about 5 KB
+**GHOST ±s** delta under the timer comparing you at the same point on the road. Toggle it in
+**Settings** or with `G`; `?ghost=0` disables it. There are no ghosts in Duel. Ghosts take about 5 KB
 per minute of driving; ghosts of past daily stages are pruned automatically.
 
 ### Duel (2 players, split screen)
 
-Pick **Duel** in the menu. Both cars start side by side on the same stage. Each player has
+Pick **Duel** with the SOLO / DUEL pill in the menu (or `2`). Both cars start side by side on the same stage. Each player has
 their own timer, splits and camera. When both have finished, the results show the winner,
 the gap and a split-by-split comparison. Duel times are not saved as solo records.
 
@@ -112,7 +118,7 @@ the gap and a split-by-split comparison. Duel times are not saved as solo record
 | Camera | `C` | `.` |
 | Gamepad | first pad | second pad |
 
-Duel needs a keyboard or two gamepads, so it is turned off on touch-only devices.
+Duel needs a keyboard or two gamepads, so the SOLO / DUEL pill is hidden on touch-only devices.
 
 ## Run locally
 
@@ -126,7 +132,7 @@ npx http-server -p 8080 -c-1     # or: python3 -m http.server 8080
 Then open <http://localhost:8080/>.
 
 Handy URL parameters: `?stage=mesa` preselects a stage (an id, `daily`, or a 0-based index into
-the stage list), `?mode=duel` preselects split-screen duel, `?rally=forest&start=1` jumps straight into a region's rally, `?build=max|stock|<json>` and `?credits=N` try builds without touching your saved profile, `?start=1` skips the menu, and `?auto=1` lets
+the stage list), `?mode=duel` preselects split-screen duel, `?rally=forest` preselects a region's rally (with `&start=1` it jumps straight in), `?build=max|stock|<json>` and `?credits=N` try builds without touching your saved profile, `?start=1` skips the menu, and `?auto=1` lets
 the autopilot drive the race (both cars in a duel). `?cond=night,rain` forces conditions on any
 stage, for testing.
 
@@ -143,8 +149,10 @@ The other modules each handle one part:
 | `catalog.js` | menu order, region and daily lookups, stage lengths and conditions (falls back to defaults if track.js lacks them) |
 | `fx.js` | dust and spray puffs, rain streaks, night headlights |
 | `player.js` | one racer: car, chase/orbit camera, viewport and timing |
-| `hud.js` | per-player HUD panes and the solo/duel results panels |
-| `menu.js` | main menu: medal points, mode toggle, region tabs and rally strip, stage and daily cards, paints |
+| `hud.js` | per-player HUD panes (fixed slots: timer + penalty chip, two sub-chips, rally and gate pills by the progress bar, OFF ROAD) and the result panels |
+| `menu.js` | main menu: top bar, Play / Garage tabs, region and Daily tabs (the tab is the selection), stage / rally / daily entries, the START label |
+| `settings.js` | the Settings overlay: sound, ghost and the controls reference (keyboard / gamepad / touch) |
+| `nav.js` | roving keyboard / gamepad focus on the pause and result panels |
 | `carapi.js` | the Rook's build API (upgrades, parts, paints) from car.js, with fallbacks |
 | `economy.js` | credits, the earn table, the saved profile and purchases |
 | `garage.js` | the Garage view: Tune and Style, previews, buying |

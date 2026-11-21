@@ -47,96 +47,56 @@
   <!-- ===== Menu ===== -->
   <div id="menu" class="menu hidden">
     <div class="menu-panel">
-      <header class="brand">
-        <div class="brand-row">
-          <div class="logo"><span class="logo-slash"></span><span class="logo-word">DUSTLINE</span></div>
-          <div class="points" id="points" title="Medal points: bronze 1, silver 2, gold 3"></div>
-        </div>
-        <div class="tagline">a pocket rally &mdash; one car, one clock</div>
+      <!-- top bar: logo, medal points, credits (the only place in the menu), settings -->
+      <header class="topbar">
+        <div class="logo"><span class="logo-slash"></span><span class="logo-word">DUSTLINE</span></div>
+        <div class="points" id="points" title="Medal points: bronze 1, silver 2, gold 3, ace 4 per stage (the Daily Stage does not count)"></div>
+        <div class="cr-chip" id="credits" title="Credits: earned by finishing solo stages, spent in the Garage"></div>
+        <button class="icon-btn gear-btn" id="gearBtn" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 2h3.4l.5 2.6a7.6 7.6 0 0 1 1.9 1.1l2.5-.9 1.7 2.9-2 1.7a7.7 7.7 0 0 1 0 2.2l2 1.7-1.7 2.9-2.5-.9a7.6 7.6 0 0 1-1.9 1.1l-.5 2.6h-3.4l-.5-2.6a7.6 7.6 0 0 1-1.9-1.1l-2.5.9-1.7-2.9 2-1.7a7.7 7.7 0 0 1 0-2.2l-2-1.7 1.7-2.9 2.5.9a7.6 7.6 0 0 1 1.9-1.1zM12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8z" fill="currentColor" fill-rule="evenodd"/></svg></button>
       </header>
 
-      <div class="mode-row">
-        <div class="seg" role="radiogroup" aria-label="Mode">
-          <button class="seg-btn" data-mode="solo" role="radio">Solo<span class="seg-key kbd-only">1</span></button>
-          <button class="seg-btn" data-mode="duel" role="radio">Duel <small>2P</small><span class="seg-key kbd-only">2</span></button>
+      <!-- the sheet: everything below the top bar (a bottom sheet on phones, so the car stays visible) -->
+      <div class="menu-body" id="menuBody">
+        <div class="nav-row">
+          <div class="ptabs" role="tablist" aria-label="Menu view">
+            <button class="ptab view-btn" data-view="play" role="tab">Play</button>
+            <button class="ptab view-btn" data-view="garage" role="tab">Garage<span class="new-dot dot hidden" id="garageNew" title="Something affordable"></span></button>
+          </div>
+          <div class="seg mode-seg" id="modeSeg" role="radiogroup" aria-label="Mode">
+            <button class="seg-btn" data-mode="solo" role="radio">Solo</button>
+            <button class="seg-btn" data-mode="duel" role="radio">Duel</button>
+          </div>
         </div>
-        <div class="seg view-seg" role="tablist" aria-label="Menu view">
-          <button class="seg-btn view-btn" data-view="stages" role="tab">Stages</button>
-          <button class="seg-btn view-btn" data-view="garage" role="tab">Garage<span class="new-dot dot hidden" id="garageNew" title="Something affordable"></span><span class="seg-key kbd-only">V</span></button>
-        </div>
-      </div>
-      <div class="mode-note" id="modeNote"></div>
+        <div class="mode-note" id="modeNote"></div>
 
-      <!-- garage: tune and style the Rook (rendered by garage.js) -->
-      <section class="menu-sec garage-sec hidden" id="garageSec"></section>
+        <!-- garage: tune and style the Rook (rendered by garage.js) -->
+        <section class="menu-sec garage-sec hidden" id="garageSec"></section>
 
-      <section class="menu-sec stages-sec" id="stagesSec">
-        <div class="sec-head stage-head"><h2>Stage</h2><span class="sec-hint kbd-only">&larr; &rarr; stage &middot; &uarr; &darr; region</span></div>
-        <div class="tabs" id="regionTabs" role="tablist" aria-label="Regions"></div>
-        <div class="region-blurb" id="regionBlurb"></div>
-        <div class="rally-strip" id="rallyStrip"></div>
-        <div class="cards" id="cards"></div>
-        <div class="daily-slot" id="dailySlot"></div>
-      </section>
+        <section class="menu-sec stages-sec" id="stagesSec">
+          <div class="tabs" id="regionTabs" role="tablist" aria-label="Regions"></div>
+          <div class="list-head" id="listHead"></div>
+          <div class="cards" id="cards"></div>
+        </section>
 
-      <div class="legend legend-keys">
-        <span><kbd>&uarr;</kbd>/<kbd>W</kbd> gas</span>
-        <span><kbd>&darr;</kbd>/<kbd>S</kbd> brake</span>
-        <span><kbd>&larr;</kbd><kbd>&rarr;</kbd> steer</span>
-        <span><kbd>Space</kbd> handbrake</span>
-        <span><kbd>R</kbd> reset</span>
-        <span><kbd>C</kbd> camera</span>
-        <span><kbd>M</kbd> mute</span>
-        <span><kbd>Esc</kbd> pause</span>
-        <span><kbd>T</kbd> start rally</span>
-        <span><kbd>G</kbd> ghost</span>
-        <span><kbd>V</kbd> garage</span>
-      </div>
-      <div class="legend legend-duel">
-        <span class="lg-p">P1</span>
-        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive</span>
-        <span><kbd>L-Shift</kbd> hand</span>
-        <span><kbd>R</kbd> reset</span>
-        <span><kbd>C</kbd> cam</span>
-        <span class="lg-br"></span>
-        <span class="lg-p">P2</span>
-        <span><kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd> drive</span>
-        <span><kbd>R-Shift</kbd>/<kbd>Enter</kbd> hand</span>
-        <span><kbd>/</kbd> reset</span>
-        <span><kbd>.</kbd> cam</span>
-        <span class="lg-br"></span>
-        <span>Pads: 1st &rarr; P1, 2nd &rarr; P2</span>
-        <span><kbd>Esc</kbd> pause</span>
-        <span><kbd>M</kbd> mute</span>
-        <span><kbd>T</kbd> rally</span>
-        <span><kbd>V</kbd> garage</span>
-      </div>
-      <div class="legend legend-touch">
-        <span>&#9664; &#9654; steer on the left</span>
-        <span>GAS / BRAKE on the right</span>
-        <span>HAND for hairpins</span>
-      </div>
-      <!-- pinned to the bottom of the scrolling panel: paint + START are always reachable -->
-      <div class="menu-foot">
-        <div class="foot-summary" id="footSummary"></div>
-        <div class="menu-actions">
-          <button class="btn primary big" id="startBtn">START<span class="btn-key">Enter</span></button>
-          <button class="btn ghost toggle" id="ghostBtn" aria-pressed="true" title="Race against your best run (G)">Ghost on</button>
-          <button class="btn ghost" id="muteBtn" aria-pressed="false">Sound on</button>
+        <!-- pinned to the bottom of the scrolling sheet: START names what it starts -->
+        <div class="menu-foot">
+          <button class="btn primary big start-btn" id="startBtn">Start</button>
         </div>
       </div>
+      <div class="notice alt menu-toast" id="menuToast"></div>
     </div>
   </div>
 
   <!-- ===== Pause ===== -->
   <div id="pause" class="overlay hidden">
     <div class="panel small">
-      <div class="panel-kicker">Paused</div>
+      <div class="panel-kicker" id="pauseKicker">Paused</div>
       <div class="panel-title" id="pauseStage">Stage</div>
       <div class="panel-btns col">
         <button class="btn primary" id="resumeBtn">Resume<span class="btn-key">Esc</span></button>
-        <button class="btn" id="restartBtn">Restart stage</button>
-        <button class="btn ghost" id="pMenuBtn">Menu</button>
+        <button class="btn" id="restartBtn">Restart</button>
+        <button class="btn" id="pSettingsBtn">Settings</button>
+        <button class="btn ghost" id="pMenuBtn">Quit to menu</button>
       </div>
     </div>
   </div>
@@ -144,17 +104,17 @@
   <!-- ===== Finish ===== -->
   <div id="finish" class="overlay hidden">
     <div class="panel">
-      <div class="panel-kicker" id="finStage">Stage complete</div>
+      <div class="panel-kicker" id="finStage">Stage</div>
       <div class="fin-time" id="finTime">0:00.000</div>
       <div class="fin-best" id="finBest"></div>
       <div class="fin-pen" id="finPen"></div>
       <div class="fin-medal" id="finMedal"></div>
       <div class="fin-earn" id="finEarn"></div>
       <table class="splits" id="finSplits"></table>
-      <div class="panel-btns">
-        <button class="btn primary" id="retryBtn">Retry<span class="btn-key">R</span></button>
-        <button class="btn" id="nextBtn">Next stage<span class="btn-key">N</span></button>
-        <button class="btn ghost" id="fMenuBtn">Menu<span class="btn-key">Enter</span></button>
+      <div class="panel-btns res-btns">
+        <button class="btn primary" id="retryBtn">Retry<span class="btn-key">Enter</span></button>
+        <button class="btn" id="nextBtn">Next<span class="btn-key">N</span></button>
+        <button class="btn ghost wide" id="fMenuBtn">Menu<span class="btn-key">Esc</span></button>
       </div>
     </div>
   </div>
@@ -166,10 +126,10 @@
       <div class="winner" id="dfWinner"></div>
       <div class="df-gap" id="dfGap"></div>
       <table class="splits duel-splits" id="dfTable"></table>
-      <div class="panel-btns">
-        <button class="btn primary" id="dfRematch">Rematch<span class="btn-key">R</span></button>
-        <button class="btn" id="dfNext">Next stage<span class="btn-key">N</span></button>
-        <button class="btn ghost" id="dfMenu">Menu<span class="btn-key">Enter</span></button>
+      <div class="panel-btns res-btns">
+        <button class="btn primary" id="dfRematch">Rematch<span class="btn-key">Enter</span></button>
+        <button class="btn" id="dfNext">Next<span class="btn-key">N</span></button>
+        <button class="btn ghost wide" id="dfMenu">Menu<span class="btn-key">Esc</span></button>
       </div>
     </div>
   </div>
@@ -177,6 +137,15 @@
   <!-- ===== Rally interstitial / results (content rendered by hud.js) ===== -->
   <div id="rally" class="overlay hidden">
     <div class="panel rally-panel" id="rallyBody"></div>
+  </div>
+
+  <!-- ===== Settings (gear, Esc in PLAY, pad Y, Pause > Settings) ===== -->
+  <div id="settings" class="overlay hidden">
+    <div class="panel small settings-panel" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+      <div class="set-head"><div class="panel-title" id="setTitle">Settings</div><button class="x-btn" data-act="close" aria-label="Close settings">&times;</button></div>
+      <div class="set-rows" id="setRows"></div>
+      <div class="set-foot"><button class="btn primary set-done" data-act="close" data-nav data-row="done">Done<span class="btn-key">Esc</span></button></div>
+    </div>
   </div>
 
   <div id="loading" class="loading"><div class="loading-bar"></div><span>Laying gravel&hellip;</span></div>
