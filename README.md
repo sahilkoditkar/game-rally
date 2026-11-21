@@ -16,7 +16,7 @@ nothing is loaded from the network.
 | Steer | `←` `→` or `A` `D` | left stick | ◀ ▶ |
 | Handbrake | `Space` | A | HAND |
 | Reset onto road | `R` | Y | RESET |
-| Camera (chase / high / top) | `C` | | |
+| Camera (chase / far chase / low action) | `C` | | |
 | Pause | `Esc` | Start | ‖ button |
 | Sound / ghost on or off | `M` / `G` | | Settings |
 | Settings (sound, ghost, controls) | `Esc` in Play | Y in the menu | gear button |
