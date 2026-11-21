@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { Stage, clamp } from './track.js';
 import { autopilot } from './car.js';
-import { Sound } from './audio.js';
+import { Sound, music, setVolume, getVolume } from './audio.js';
 import { $, params } from './util.js';
 import { store, getBest, setBest } from './storage.js';
 import { REGIONS, menuIds, getDef, regionOf, nextId, isDaily, dailyDef, conditions, lengthOf } from './catalog.js';
@@ -67,7 +67,12 @@ function soundFor(key, opts) {
   return soundBank[key];
 }
 const allSounds = () => Object.values(soundBank);
-const resumeAudio = () => { for (const s of allSounds()) s.resume(); };
+const resumeAudio = () => { for (const s of allSounds()) s.resume(); music.start(); }; // gestures only: no audio before the first one
+// music / effects volume (0..1), saved as dustline.vol = { music, sfx }
+const VOL_KEY = 'dustline.vol';
+{ const v = store.get(VOL_KEY, null) || {}; for (const k of ['music', 'sfx']) if (typeof v[k] === 'number') setVolume(k, v[k]); }
+function setVol(kind, v) { setVolume(kind, v); store.set(VOL_KEY, { music: getVolume('music'), sfx: getVolume('sfx') }); }
+let musicT = 0;
 const modeSounds = () => (racers.length === 2
   ? [soundFor('l', { pan: -0.5, gain: 0.85 }), soundFor('r', { pan: 0.5, gain: 0.85 })]
   : [soundFor('c', { pan: 0, gain: 1 })]);
@@ -532,6 +537,8 @@ const settingsCtx = (from) => ({
   // Touch on touch-only devices, Gamepad when a pad is connected, otherwise Keyboard
   defaultCtl: () => (isTouch && !hasFinePointer ? 'touch' : connectedPads().length ? 'gamepad' : 'keyboard'),
   onMute: () => toggleMute(), onGhost: () => toggleGhost(),
+  volume: (k) => getVolume(k),
+  onVolume: (k, v, final) => { setVol(k, v); if (final && k === 'sfx') modeSounds()[0].beep(660, 0.09); }, // a soft preview blip
   onClose: () => setScreen(), // from Pause, closing shows the pause panel again (still paused)
 });
 function openSettings(opener) {
@@ -875,6 +882,12 @@ function frame(now) {
       active: active && k >= 0,
     });
   }
+  // music: the scene follows the game state, ducked while paused, intensity from the lead car's speed (4x per second)
+  const racing = state === 'countdown' || state === 'race';
+  music.setScene(racing ? { scene: 'race', region: stage.def.region || regionOf(stage.def.id), night: cond.night, rain: cond.rain, seed: stage.def.id }
+    : { scene: state === 'finish' ? 'results' : 'menu' });
+  music.duck(paused);
+  if ((musicT -= dt) <= 0) { musicT = 0.25; music.setIntensity(racing ? Math.max(...racers.map((p) => p.car.speed || 0)) / 45 : 0); }
   render();
 }
 
@@ -919,6 +932,9 @@ window.__game = {
   get screen() { return screenName(); },
   padPress: (k, b) => onPadEdge(k, b), // drive the gamepad edge handler (tests)
   get muted() { return muted; },
+  get volume() { return { music: getVolume('music'), sfx: getVolume('sfx'), muted }; },
+  setVolume: (kind, v) => { setVol(kind, v); if (settingsOpen()) renderSettings(); return getVolume(kind); },
+  get music() { const m = music.info; return { scene: m.scene, region: m.region, playing: m.playing, ducked: m.ducked }; },
   setMode,
   get time() { return players[0].time; },
   get times() { return racers.map((p) => p.time); },
