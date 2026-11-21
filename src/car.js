@@ -85,6 +85,7 @@ const TUNE = {
     roughFlat: [0.3, 0.223, 0.172, 0.14], roughDrag: [0.02, 0.0149, 0.0114, 0.0094], roughQuad: [0.0032, 0.00235, 0.00181, 0.00148],
     roughSpin: [0.3, 0.27, 0.24, 0.21],
     roughGrip: [0.17, 0.14, 0.11, 0.08], roughBrake: [0.5, 0.45, 0.4, 0.35], roughJolt: [0.5, 0.42, 0.34, 0.25],
+    landYaw: [1, 0.8, 0.6, 0.4],
   },
 };
 
@@ -175,6 +176,13 @@ function normalizeRaw(any) {
 const REV_ACC = 6, REV_MAX = 9, GRIP = 10.5, GRAV = 20;
 const FIXED_DT = 1 / 120;
 const MAX_ROLL = 0.105, MAX_PITCH = 0.07; // cosmetic body lean limits (~6 deg, ~4 deg)
+// Jumps and hairpins. These thresholds sit outside anything the 12 original stages produce (their longest
+// autopilot flight is 0.125 s, sharpest crest 0.066 in slope change, tightest curvature 0.066 rad/m), so the
+// new behaviour only switches on for real kickers and real hairpins and the old stages drive bit-identically.
+const JUMP_AIR = 0.2;        // s: flights longer than this are jumps (landing unsettles the car)
+const JUMP_REPORT = 0.22;    // s: flights longer than this are reported in car.lastJump (a size-1 kicker flies ~0.25 s)
+const LIP_CONV = 0.15;       // slope drop across the car (behind vs ahead) that marks a sharp kicker lip
+const HAIRPIN_CURV = 0.072;  // rad/m: corners tighter than ~14 m radius
 // physical footprint for collisions (independent of cosmetic parts)
 const PHYS = { wx: 0.82, wheelW: 0.26, wz: 1.25, wzR: 1.25 };
 
@@ -216,6 +224,7 @@ const BASE = Object.freeze({
   roughGrip: 0.17,  // extra lateral grip lost (on top of offGripLoss)
   roughBrake: 0.5,  // brake force lost
   roughJolt: 0.5,   // yaw jostle from bumps, rad/s at speed
+  landYaw: 1,       // how much a crooked or one-sided jump landing twists the car
   planted: 0,       // extra lateral grip at speed from tyres staying planted over ruts (0 at 15 m/s .. full at 35)
   lean: 1,          // cosmetic body roll / pitch / bob scale
   gears: [0, 11, 19, 27, 36, 46],
@@ -578,6 +587,9 @@ export class Car {
     this.vx = 0; this.vz = 0; this.vy = 0; this.yawRate = 0;
     this.speed = 0; this.vf = 0; this.slip = 0; this.steer = 0;
     this.idx = 0; this.roadDist = 0; this.offroad = 0; this.rough = 0; this._roughRaw = 0; this.grounded = true;
+    this.airTime = 0;      // s of the current flight (0 on the ground)
+    this.lastJump = null;  // { time, dist, landingSpeedLoss } of the last flight longer than JUMP_REPORT
+    this._to = { x: 0, z: 0 }; this._droop = 0;
     this.impact = 0; this.rpm = 0.25; this.gear = 1; this.throttle = 0;
     this.time = 0;
     this.aLat = 0; this.aLong = 0;   // low-passed accelerations (m/s^2), lateral +left
@@ -708,6 +720,7 @@ export class Car {
     this.vx = this.vz = this.vy = 0; this.yawRate = 0;
     this.speed = this.vf = this.slip = 0; this.steer = 0; this._sIn = 0;
     this.idx = idx; this.roadDist = 0; this.offroad = 0; this.rough = 0; this._roughRaw = 0; this.grounded = true;
+    this.airTime = 0; this.lastJump = null; this._droop = 0;
     this.impact = 0; this.rpm = 0.25; this.gear = 1; this.throttle = 0; this._thrAvg = 0;
     this.aLat = this.aLong = 0; this.drift = 0; this.driftAngle = 0;
     this._bRoll = this._bRollV = this._bPitch = this._bPitchV = this._bob = this._bobV = 0;
@@ -849,19 +862,30 @@ export class Car {
 
     // vertical
     const h2 = stage.height(this.x, this.z);
+    // on a sharp kicker lip the ramp's own slope launches the car (a centred slope would already "see" the drop
+    // beyond the lip and kill the kick); smooth roads never trip LIP_CONV so they keep the centred slope
+    const sB = (h - hB) / 1.5, sF = (hF - h) / 1.5;
+    let lip = sB - sF > LIP_CONV;
+    if (!lip && stage.jumps && stage.jumps.length && sB > sF) { // declared kickers: launch off the ramp slope near the lip
+      for (const jp of stage.jumps) if (this.idx >= jp.idx - 3 && this.idx <= jp.idx + 1) { lip = true; break; }
+    }
+    const vLaunch = lip ? vf * clamp(sB, -0.6, 0.8) : vSurf;
     if (this.grounded) {
       const yFree = this.y + this.vy * dt - GRAV * dt * dt;
       if (h2 < yFree - 0.004 && speed > 12) {
         this.grounded = false;
         this.y = yFree; this.vy -= GRAV * dt;
+        this._to.x = this.x; this._to.z = this.z; this.airTime = dt;
       } else {
-        this.y = h2; this.vy = vSurf;
+        this.y = h2; this.vy = vLaunch;
       }
     } else {
       this.vy -= GRAV * dt;
       this.y += this.vy * dt;
+      this.airTime += dt;
       if (this.y <= h2) {
         const hit = vSurf - this.vy;
+        const flight = this.airTime, sp0 = Math.hypot(this.vx, this.vz);
         this.y = h2;
         this.vy = vSurf;
         this.grounded = true;
@@ -871,6 +895,20 @@ export class Car {
           this.vx *= k; this.vz *= k;
         }
         this._land = Math.max(this._land, hit);
+        if (flight > JUMP_AIR) {
+          // a crooked landing (heading vs velocity) snaps the car toward its velocity and past it, a one-sided one
+          // (cross-slope under the car) kicks it; stiffer / longer-travel suspension soaks most of it up
+          const sev = clamp((hit - 2) / 8, 0, 1.5) * K.landYaw;
+          const f3x = Math.sin(this.yaw), f3z = Math.cos(this.yaw), l3x = f3z, l3z = -f3x;
+          const b3 = Math.atan2(this.vx * l3x + this.vz * l3z, Math.abs(this.vx * f3x + this.vz * f3z) + 1.5);
+          const cross = (stage.height(this.x + l3x * 0.8, this.z + l3z * 0.8) - stage.height(this.x - l3x * 0.8, this.z - l3z * 0.8)) / 1.6;
+          this.yawRate = clamp(this.yawRate + sev * (2.2 * b3 + 1.8 * cross + 0.25 * roughBump(this.x, this.z, 5)), -2.5, 2.5);
+          if (Math.abs(b3) > 0.08) this.drift = Math.max(this.drift, Math.min(0.5, sev * Math.abs(b3) * 2.5));
+        }
+        if (flight > JUMP_REPORT) {
+          this.lastJump = { time: flight, dist: Math.hypot(this.x - this._to.x, this.z - this._to.z), landingSpeedLoss: Math.max(0, sp0 - Math.hypot(this.vx, this.vz)) };
+        }
+        this.airTime = 0;
       }
     }
 
@@ -988,7 +1026,11 @@ export class Car {
       heave = j * 0.06 * roughBump(bx, bz, 4);
     }
     rT = clamp(rT, -MAX_ROLL, MAX_ROLL); pT = clamp(pT, -MAX_PITCH, MAX_PITCH);
-    if (this._land > 0) { this._bobV -= Math.min(this._land, 12) * 0.2 * K.lean; this._land = 0; }
+    if (this._land > 0) { // landing: the body compresses and the nose dips, more the harder the hit
+      this._bobV -= Math.min(this._land, 12) * 0.2 * K.lean;
+      if (this._land > 2.5) this._bPitchV += Math.min(this._land, 12) * 0.04 * K.lean;
+      this._land = 0;
+    }
     const shake = this.speed * (0.0015 + 0.008 * this.offroad) * K.lean;
     const subs = Math.max(1, Math.ceil(dt / (1 / 240)));
     const h = dt / subs;
@@ -1030,6 +1072,10 @@ export class Car {
       this.wheels[i].rotation.x = (this.wheels[i].rotation.x + spin * dt) % (Math.PI * 2);
       if (i < 2) this.wheelPivots[i].rotation.y = this.steer;
     }
+    // wheels droop on their springs in the air and snap back on landing
+    const droopT = !this.grounded && this.airTime > 0.06 ? 0.09 : 0;
+    this._droop += (droopT - this._droop) * (1 - Math.exp(-(droopT > this._droop ? 9 : 30) * dt));
+    for (let i = 0; i < 4; i++) this.wheelPivots[i].position.y = this.dims.wheelR - this._droop;
   }
 
   wheelWorld(i, target = new THREE.Vector3()) {
@@ -1053,23 +1099,42 @@ export function buildCarPreview(build = DEFAULT_BUILD) {
 export function autopilot(car, stage) {
   const st = car._ap || (car._ap = { slowSince: -1, startT: car.time, lastT: car.time });
   // detect a fresh reset / large time discontinuity
-  if (car.time < st.lastT) { st.startT = car.time; st.slowSince = -1; }
+  if (car.time < st.lastT) { st.startT = car.time; st.slowSince = -1; st.good = undefined; }
   st.lastT = car.time;
 
+  // the last road sample the car was really on: off in the rough between switchback legs, the nearest sample
+  // can jump to the next leg up or down the hillside; recovery and steering then use this instead
+  if (st.good === undefined || car.roadDist < ROAD_HALF + 1) st.good = car.idx;
+  const hopped = car.idx > st.good + 15 && car.roadDist >= ROAD_HALF + 1;
+  const homeIdx = hopped ? st.good : car.idx;
+
   // recovery
-  if (car.roadDist > 25) { car.reset(stage, car.idx); st.startT = car.time; st.slowSince = -1; car._resets = (car._resets || 0) + 1; }
+  if (car.roadDist > 25) { car.reset(stage, homeIdx); st.startT = car.time; st.slowSince = -1; st.good = car.idx; car._resets = (car._resets || 0) + 1; }
   if (car.speed < 1 && car.time - st.startT > 1.5) {
     if (st.slowSince < 0) st.slowSince = car.time;
     else if (car.time - st.slowSince > 3) {
-      car.reset(stage, Math.min(stage.n - 1, car.idx + 2));
+      car.reset(stage, Math.min(stage.n - 1, homeIdx + 2)); st.good = car.idx;
       st.startT = car.time; st.slowSince = -1; car._resets = (car._resets || 0) + 1;
     }
   } else st.slowSince = -1;
 
   const K = car.H || BASE;
   const _ai = { steer: 0, throttle: 0, brake: 0, hand: false };
-  const speed = car.speed, i0 = car.idx, N = stage.n;
-  const look = clamp(6 + speed * 0.55, 8, 40);
+  const speed = car.speed, i0 = hopped ? st.good : car.idx, N = stage.n;
+  let look = clamp(6 + speed * 0.55, 8, 40);
+  // jumps (only on stages that declare kickers): the next lip ahead and the flight it will give
+  let lipK = -1, flight = 0;
+  if (stage.jumps && stage.jumps.length) {
+    for (const jp of stage.jumps) {
+      const dk = jp.idx - i0; if (dk < -2 || dk > 120) continue;
+      const li = jp.idx, a = Math.max(0, li - 3), b = Math.min(N - 1, li + 6);
+      const ramp = Math.max(0, (stage.sy[li] - stage.sy[a]) / ((li - a) * STEP)), drop = Math.max(0, stage.sy[li] - stage.sy[b]);
+      const vy0 = Math.max(speed, 12) * ramp, tf = (vy0 + Math.sqrt(vy0 * vy0 + 2 * GRAV * drop)) / GRAV;
+      if (lipK < 0 || dk < lipK) { lipK = Math.max(0, dk); flight = Math.max(speed, 12) * tf + 4; }
+    }
+    // square up for the lip and hold it straight through the air: aim far down the road
+    if ((lipK >= 0 && lipK * STEP < 25) || !car.grounded) look = 32;
+  }
   const j = Math.min(N - 1, i0 + Math.round(look / STEP));
   const ang = Math.atan2(stage.sx[j] - car.x, stage.sz[j] - car.z);
   let diff = ang - car.yaw;
@@ -1082,6 +1147,7 @@ export function autopilot(car, stage) {
   const lat = GRIP * K.grip * stage.def.grip;
   const wMax = Math.max(0.05, Math.min(Math.abs(car.vf) * Math.tan(maxSteer) / K.wb, lat * (1 - 0.25 * car.offroad) * (car._roughRaw > 0 ? 1 - K.roughGrip * car._roughRaw : 1) / av * K.yawMargin));
   _ai.steer = clamp(wDes / wMax * 1.25 + diff * 0.5, -1, 1);
+  if (!car.grounded && car.airTime > 0.05 && stage.jumps && stage.jumps.length) _ai.steer = 0; // no authority in the air: land with the wheels straight
 
   // speed plan: allowed speed at each upcoming sample, relaxed by braking distance
   const span = Math.round((15 + speed * 1.6) / STEP);
@@ -1089,20 +1155,35 @@ export function autopilot(car, stage) {
   // more corner-entry speed the steadier the car is under braking (stock = 0.75 of the grip limit)
   const bDec = 9 * Math.pow(K.brake / 17, 1.5);
   const entry = 0.75 + 0.03 * (K.tractionBrake - 16) / 13.5;
-  let vT = 70;
+  let vT = 70, hairpin = false;
+  // braking room to sample k: no braking while airborne over a kicker in between
+  const room = (k) => (lipK >= 0 && k > lipK ? Math.max(0, k * STEP - flight) : k * STEP);
   for (let k = 0; k <= span; k++) {
     const i = Math.min(N - 1, i0 + k);
     const c = Math.abs(stage.curv[i]);
     let vc = c > 1e-4 ? Math.sqrt(lat * entry / c) : 70;
     if (K.planted && c > 1e-4) vc = Math.sqrt(lat * (1 + K.planted * smoothstep(15, 35, vc)) * entry / c);
-    const v = Math.sqrt(vc * vc + 2 * bDec * k * STEP);
-    if (v < vT) vT = v;
+    const v = Math.sqrt(vc * vc + 2 * bDec * room(k));
+    if (v < vT) { vT = v; hairpin = c > HAIRPIN_CURV; }
+  }
+  // hairpins: look further ahead (braking from 130 km/h to ~35 takes ~70 m) - only hairpin samples, so roads
+  // without hairpins plan exactly as before
+  const span2 = Math.round((20 + speed * 3.2) / STEP);
+  for (let k = span + 1; k <= span2; k++) {
+    const i = Math.min(N - 1, i0 + k), c = Math.abs(stage.curv[i]);
+    if (c <= HAIRPIN_CURV) continue;
+    const vc = Math.sqrt(lat * entry / c), v = Math.sqrt(vc * vc + 2 * bDec * room(k));
+    if (v < vT) { vT = v; hairpin = true; }
   }
   // get back onto the road gently when off it
   if (car.roadDist > ROAD_HALF + 1) vT = Math.min(vT, 18);
   vT = Math.max(vT, 7);
 
-  if (speed < vT) { _ai.throttle = clamp((vT - speed) * 0.6 + 0.3, 0, 1); _ai.brake = 0; }
+  if (hairpin) { // a hairpin sets the pace: track the braking curve tightly instead of with the usual dead band
+    if (speed < vT - 0.5) { _ai.throttle = clamp((vT - speed) * 0.6 + 0.2, 0, 1); _ai.brake = 0; }
+    else if (speed > vT + 0.3) { _ai.throttle = 0; _ai.brake = clamp((speed - vT) * 0.6 + 0.3, 0.3, 1); }
+    else { _ai.throttle = 0.2; _ai.brake = 0; }
+  } else if (speed < vT) { _ai.throttle = clamp((vT - speed) * 0.6 + 0.3, 0, 1); _ai.brake = 0; }
   else if (speed > vT + 2) { _ai.throttle = 0; _ai.brake = clamp((speed - vT - 2) * 0.35, 0.2, 1); }
   else { _ai.throttle = 0.25; _ai.brake = 0; }
   if (car.idx >= stage.finishIdx + 3) { _ai.throttle = 0; _ai.brake = 1; }
