@@ -1,8 +1,8 @@
 # Dustline
 
 A pocket rally: a low-poly, flat-shaded time-trial game that runs in the browser.
-Twelve stages in four regions (forest, desert, snow, coast), some of them at night or in
-the rain, plus a new Daily Stage generated from the date. One car, one clock. Beat your best time and split times on each stage; records are kept in
+Fifteen stages in five regions (forest, desert, snow, coast and the volcanic Ashcrown Pass, full of
+hairpins and jumps), some of them at night or in the rain, plus a new Daily Stage generated from the date. One car, one clock. Beat your best time and split times on each stage; records are kept in
 your browser's local storage.
 
 Built with plain ES modules and three.js (vendored in `vendor/`). There is no build step and
@@ -31,6 +31,13 @@ menu, `Esc` on the Play view, gamepad Y, or **Settings** in the pause panel. On 
 (or A) presses the highlighted button (Retry, Rematch, Continue, Rally again) and `Esc` (or B) goes to the
 menu; presses in the first 400 ms after a panel appears are ignored, so a held handbrake can't skip it.
 
+### Ashcrown Pass (the fifth region)
+
+Three volcanic stages (Cinderreach, Sulfurleap, Kettlecrown) of basalt and cinder above the clouds, with
+tight hairpins stacked into switchbacks and gravel kickers that launch the car. Land a jump of 6 m or
+more and the HUD calls it out, e.g. **AIR 22 m** (bigger for big jumps, with **LONGEST** when you beat
+your best of the session). Like every region it is also a three-stage rally.
+
 ### Rules
 
 Stages are lined with **gates**: pairs of flagged poles across the road. Drive between every pair; a
@@ -51,7 +58,7 @@ camera and throws dark clods, and an OFF ROAD sign shows under the progress bar.
 
 Every stage has a par time (the reference autopilot's time). Beat **par × 1.35** for bronze,
 **par × 1.15** for silver, **par × 1.03** for gold and **par × 0.95** for the teal star-in-ring **Ace**. A stage's medal always comes from your best
-time on it. Bronze, silver, gold and ace are worth 1, 2, 3 and 4 medal points (maximum 48). The Daily Stage shows a medal but does not count towards points. The menu shows
+time on it. Bronze, silver, gold and ace are worth 1, 2, 3 and 4 medal points (maximum 60). The Daily Stage shows a medal but does not count towards points. The menu shows
 your points and each region's medals; the selected stage shows its four target times; during a run
 the HUD shows the best medal still in reach.
 

@@ -821,6 +821,16 @@ function frame(now) {
       watchdog(p, dt);
       p.car.updateVisual(dt);
       dust.emitFrom(p.car, p.carry, dt, state === 'race' || state === 'finish' ? roughOf(p.car) : 0);
+      // jump call-out: when a flight ends (car.lastJump changes), "AIR 22 m"; nothing under 6 m; session best flagged
+      const lj = p.car.lastJump;
+      if (lj && lj !== p.seenJump) {
+        p.seenJump = lj;
+        if (state === 'race' && !p.done && lj.dist >= 6) {
+          const best = lj.dist > (p.bestJump || 0) && (p.bestJump || 0) >= 6;
+          p.bestJump = Math.max(p.bestJump || 0, lj.dist);
+          showNotice(p, `AIR ${Math.round(lj.dist)} m${best ? ' \u00b7 LONGEST' : ''}`, 1.5, 'jump' + (lj.dist >= 18 ? ' big' : ''));
+        }
+      }
     }
     // ghost: record the solo run, replay the stored best on the race clock
     if (racers.length === 1 && state === 'race' && !racers[0].done) recorder.sample(racers[0].time - racers[0].pen, racers[0].car); // raw clock

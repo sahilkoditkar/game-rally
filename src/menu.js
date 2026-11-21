@@ -11,7 +11,7 @@ import { medalTimes, medalFor, medalPoints, MAX_POINTS, regionMedals, rallyStage
 
 // ---------------------------------------------------------------- the PLAY list model
 // tabs: every region, then DAILY; a region's entries are its stages followed by 'rally'; DAILY holds today's stage
-export const TAB_WORD = { forest: 'Forest', desert: 'Desert', snow: 'Snow', coast: 'Coast', daily: 'Daily' };
+export const TAB_WORD = { forest: 'Forest', desert: 'Desert', snow: 'Snow', coast: 'Coast', peaks: 'Peaks', daily: 'Daily' };
 export const playTabs = () => [...REGIONS.map((r) => r.id), 'daily'];
 export function tabEntries(tab) {
   if (tab === 'daily') return [dailyDef().id];
