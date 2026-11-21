@@ -47,6 +47,17 @@ Resets in the first 3 s after GO are free, and one incident never charges two re
 A run with no penalties earns a **CLEAN RUN** badge and +40 CR. Deep rough slows you down, shakes the
 camera and throws dark clods, and an OFF ROAD sign shows under the progress bar.
 
+### Pace notes
+
+Like a co-driver, the HUD calls each corner before you reach it: a curved arrow bent to match the corner,
+its grade in the rally convention (**1** = tightest and slowest … **6** = fast kink), the direction (L / R)
+and small tags: **long**, **tightens**, **opens**, and **→ into** when the next corner follows straight
+after. Hairpins, crests (where a fast car goes light) and jumps get their own icons. A call appears about
+3 s ahead at your current speed (never less than 45 m), a thin bar drains as you approach, and it slides
+away once you're past the apex; the call after it shows smaller beside it. Colour follows the grade: red
+for 1–2, mustard for 3–4, cream for 5–6. Notes are worked out from the road itself (`src/notes.js`), so every
+stage, daily stage and future region has them. Turn them off in **Settings › Pace notes**.
+
 ### Medals
 
 Every stage has a par time (the reference autopilot's time). Beat **par × 1.35** for bronze,
@@ -173,6 +184,7 @@ The other modules each handle one part:
 | `carapi.js` | the Rook's build API (upgrades, parts, paints) from car.js, with fallbacks |
 | `economy.js` | credits, the earn table, the saved profile and purchases |
 | `garage.js` | the Garage view: Tune and Style, previews, buying |
+| `notes.js` | pace notes: corners (graded 1–6, hairpins, long / tightens / opens / into), crests and jumps from the road geometry, and their HUD cards |
 | `rules.js` | gates, missed-gate and reset penalties, the next-gate marker |
 | `ghost.js` | ghost recording, compact storage codec, replay and the ghost-delta lookup |
 | `progress.js` | medals and medal points (derived from best times), rally pars, trophies and rally bests |

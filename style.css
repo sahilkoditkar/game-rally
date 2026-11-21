@@ -835,3 +835,72 @@ body.touch .hud-bl { display: none; }
   .menu-body { gap: 8px; }
   .card { padding-top: 7px; padding-bottom: 7px; }
 }
+
+/* ---------- pace notes: next call (big) + the one after (small), top centre under the progress row ---------- */
+.hud-notes {
+  position: absolute; left: 50%; top: calc(80px + var(--safe-t)); transform: translateX(-50%);
+  display: flex; align-items: flex-start; gap: 10px; pointer-events: none;
+}
+.n-card {
+  --nc: var(--cream);
+  position: relative; display: flex; align-items: center; gap: 6px; padding: 5px 14px 11px 8px; border-radius: 4px;
+  background: rgba(36,37,45,0.82); color: var(--nc); transform: skewX(-8deg); transform-origin: top left;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.22), inset 0 3px 0 var(--nc); white-space: nowrap;
+}
+.n-card.sv-tight { --nc: #ff6a4d; }
+.n-card.sv-mid { --nc: var(--mustard); }
+.n-card.sv-fast { --nc: var(--cream); }
+.n-card.sv-x { --nc: #8fd3ff; }
+.nicon { width: 46px; height: 46px; flex: none; transform: skewX(8deg); overflow: visible; }
+.na-line { fill: none; stroke: currentColor; stroke-width: 5.5; stroke-linecap: round; stroke-linejoin: round; }
+.na-line.thin { stroke-width: 3.5; }
+.na-head, .na-fill { fill: currentColor; }
+.n-lab { display: flex; align-items: baseline; gap: 4px; }
+.n-num { font-family: var(--num); font-size: 42px; font-weight: 900; font-style: italic; line-height: .9; }
+.n-word { font-size: 20px; font-weight: 900; font-style: italic; letter-spacing: .06em; }
+.n-dir { font-size: 13px; font-weight: 900; color: var(--cream-2); letter-spacing: .1em; }
+.n-dots { display: inline-flex; gap: 3px; margin-left: 2px; }
+.n-dots i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.n-mods { display: flex; flex-direction: column; gap: 2px; margin-left: 4px; }
+.n-mods em {
+  font-style: normal; font-size: 11px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; line-height: 1.2;
+  padding: 1px 6px; border-radius: 3px; background: rgba(244,239,226,0.14); color: var(--cream);
+}
+.n-bar { position: absolute; left: 10px; right: 10px; bottom: 4px; height: 3px; border-radius: 2px; background: rgba(244,239,226,0.16); overflow: hidden; }
+.n-bar b { display: block; height: 100%; background: var(--nc); transform-origin: left center; transition: transform .12s linear; }
+.n-card.n-then { zoom: .68; opacity: .62; }
+.n-card.n-then .n-bar { opacity: 0; }
+.n-card.n-in { animation: nIn .28s cubic-bezier(.2,1.3,.4,1); }
+@keyframes nIn { from { opacity: 0; translate: 0 -10px; } }
+.n-card.n-out { position: absolute; left: 0; top: 0; animation: nOut .3s ease forwards; }
+@keyframes nOut { to { opacity: 0; translate: -40px 0; } }
+body.results .hud-notes { opacity: 0; }
+
+/* side-by-side duel: centred over the pane's progress area */
+body.duel .hud-notes { left: calc(300px + (100% - 328px) / 2); top: 92px; }
+body.duel .nicon { width: 38px; height: 38px; }
+body.duel .n-num { font-size: 34px; }
+/* stacked duel: right-aligned under the speed plate; OFF ROAD under the notes */
+body.duel.stacked .hud-notes { left: auto; right: 12px; top: 112px; transform: none; flex-direction: column; align-items: flex-end; gap: 4px; }
+body.duel.stacked .hud-offroad { left: 50%; right: auto; top: 206px; transform: translateX(-50%) skewX(-10deg); }
+
+@media (max-width: 720px) {
+  /* phone: OFF ROAD on the left and the notes on the right of one row under the progress bar */
+  .hud-notes { left: auto; right: calc(var(--gut) + var(--safe-r)); top: calc(46px + var(--safe-t)); transform: none; gap: 6px; }
+  .hud-offroad { left: calc(var(--gut) + var(--safe-l)); top: calc(48px + var(--safe-t)); transform: skewX(-10deg); font-size: 11px; letter-spacing: .08em; padding: 2px 8px; }
+  .n-mods { max-width: 72px; }
+  .nicon { width: 34px; height: 34px; }
+  .n-num { font-size: 30px; }
+  .n-word { font-size: 15px; }
+  .n-card { padding: 4px 10px 9px 6px; }
+  .n-mods { flex-direction: row; flex-wrap: wrap; max-width: 86px; }
+  .n-mods em { font-size: 9px; padding: 1px 4px; }
+  .n-card.n-then { zoom: .6; }
+  .n-card.n-then .n-mods { display: none; }
+  .hud-tl { top: calc(108px + var(--safe-t)); }
+  body.touch .hud-br { top: calc(108px + var(--safe-t)); }
+}
+/* stacked duel: the penalty chip drops below the progress row (it used to sit on the bar) */
+body.duel.stacked .hud-timerow { flex-direction: column; align-items: flex-start; gap: 0; }
+body.duel.stacked .hud-pen { margin-top: 32px; }
+body.duel.stacked .hud-timerow:has(.hud-pen.show) + .hud-sub { margin-top: 6px; }
