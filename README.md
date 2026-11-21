@@ -171,6 +171,15 @@ the stage list), `?mode=duel` preselects split-screen duel, `?rally=forest` pres
 the autopilot drive the race (both cars in a duel). `?cond=night,rain` forces conditions on any
 stage, for testing.
 
+## Platforms
+
+The same code runs on GitHub Pages and on game portals. `src/platform/index.js` is the only portal-facing
+module the game uses: it loads one adapter at boot (`web` by default; a portal build sets
+`window.DUSTLINE_PLATFORM`, and `?platform=` works for testing) that handles loading / gameplay events, ad
+breaks at natural pauses and where saves go. On the web nothing changes: saves stay in localStorage and no
+SDK is loaded. Portal zips are built with `node scripts/build.mjs crazygames` (or `web`) into `dist/`; see
+[docs/crazygames.md](docs/crazygames.md) for the CrazyGames build, local testing and submission.
+
 ## Code map
 
 `src/main.js` runs the game: renderer, stage loading, game states, the loop and rendering.
@@ -196,7 +205,10 @@ The other modules each handle one part:
 | `ghost.js` | ghost recording, compact storage codec, replay and the ghost-delta lookup |
 | `progress.js` | medals and medal points (derived from best times), rally pars, trophies and rally bests |
 | `input.js` | keyboard, gamepad and touch input |
-| `storage.js` | localStorage wrapper and best-time records |
+| `storage.js` | saved-data wrapper (through the platform storage facade) and best-time records |
+| `boot.js` | entry point: starts the platform layer, then `main.js` |
+| `adbreak.js` | mid-game ad breaks at natural pauses: policy, veil, mute, input block |
+| `platform/` | portal adapters (`web`, `crazygames`), pacing numbers (`policy.js`), iframe behaviour (`embed.js`) |
 | `util.js` | formatting and small maths helpers |
 
 ## Publish on GitHub Pages

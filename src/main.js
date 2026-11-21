@@ -24,6 +24,8 @@ import { medalPoints, medalTimes, medalFor, medalRank, medalUp, rallyStages, ral
 import { GhostRecorder, GhostPlayer, loadGhost, saveGhost, pruneDailyGhosts, GHOST_ON_KEY } from './ghost.js';
 import { pose } from './player.js';
 import { keys, HOLD, readInput, pollPads, connectedPads, bindKeyboard, bindTouch } from './input.js';
+import { platform } from './platform/index.js';
+import { naturalBreak, breakActive, forcedMute, onForcedMute, noteRunEnd } from './adbreak.js';
 
 const FIXED = 1 / 120;
 const SUN_BASE = 2.5, HEMI_BASE = 1.7;
@@ -64,7 +66,7 @@ function skyTexture(top, horizon) {
 let muted = !!store.get('dustline.muted', false);
 const soundBank = {};
 function soundFor(key, opts) {
-  if (!soundBank[key]) { soundBank[key] = new Sound(opts); soundBank[key].setMuted(muted); }
+  if (!soundBank[key]) { soundBank[key] = new Sound(opts); soundBank[key].setMuted(muted || forcedMute()); }
   return soundBank[key];
 }
 const allSounds = () => Object.values(soundBank);
@@ -80,6 +82,7 @@ const modeSounds = () => (racers.length === 2
 const soundOf = (p) => modeSounds()[racers.length === 2 ? p.i : 0];
 const beepAll = (f, d) => { for (const s of modeSounds()) s.beep(f, d); };
 soundFor('c', { pan: 0, gain: 1 });
+onForcedMute(() => { for (const s of allSounds()) s.setMuted(muted || forcedMute()); }); // ad breaks / portal mute; the player's own setting comes back after
 
 // ---------------------------------------------------------------- players & state
 const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
@@ -368,6 +371,7 @@ function toMenu() {
   for (const p of players) { p.rules = null; p.marker.active = false; p.marker.show(false); }
   rally = null;
   clearGhost();
+  platform.gameplayStop();
   state = 'menu';
   racers = [players[0]];
   $('countdown').textContent = '';
@@ -381,10 +385,11 @@ function toMenu() {
 }
 function toGarage() { toMenu(); setView('garage'); }
 
-function setPaused(p) {
+function setPaused(p, hidden = false) {
   if (!(state === 'countdown' || state === 'race')) p = false;
   if (!p && settingsOpen()) closeSettings();
   paused = p;
+  if (p && !hidden) platform.gameplayStop(); else if (!p && state === 'race') platform.gameplayStart();
   if (p) {
     $('pauseKicker').textContent = rally ? `Paused \u00b7 Rally ${rally.idx + 1}/${rally.ids.length}` : 'Paused';
     $('pauseStage').textContent = stage.def.daily ? 'Today\u2019s stage' : stage.def.name;
@@ -470,6 +475,8 @@ function playerFinish(p) {
   } else paneFinished(racers);
   if (racers.every((q) => q.done)) {
     state = 'finish'; finishT = 0;
+    platform.gameplayStop(); noteRunEnd();
+    if (racers.length === 1 && lastRun && lastRun.newMedal) platform.happytime();
     if (rally) rallyStageDone();
     else if (racers.length === 2) renderDuelResults(stage.def, racers, nextName);
   }
@@ -509,6 +516,7 @@ function rallyStageDone() {
       prev = getRallyBest(rally.region); trophy = trophyFor(rally.region, rally.totals[0]);
       isBest = !prev || rally.totals[0] < prev.t;
       if (isBest) setRallyBest(rally.region, { t: rally.totals[0], stages: rally.times[0].slice() }); // solo only
+      if (trophy && medalRank(trophy) > medalRank(prev ? trophyFor(rally.region, prev.t) : null)) platform.happytime();
     }
     let earnHtml = '';
     if (solo) {
@@ -527,6 +535,10 @@ function rallyStageDone() {
 }
 
 function rallyContinue() {
+  if (!rally || rally.phase !== 'inter') return;
+  naturalBreak(rallyContinueNow);
+}
+function rallyContinueNow() {
   if (!rally || rally.phase !== 'inter') return;
   rally.idx++; rally.phase = 'stage'; rally.base = rally.totals.slice();
   startStage(rally.ids[rally.idx]);
@@ -578,7 +590,7 @@ function menuToast(text) {
   clearTimeout(toastTm); toastTm = setTimeout(() => t.classList.remove('show'), 1000);
 }
 function toggleMute() {
-  muted = !muted; for (const s of allSounds()) s.setMuted(muted);
+  muted = !muted; for (const s of allSounds()) s.setMuted(muted || forcedMute());
   store.set('dustline.muted', muted);
   if (settingsOpen()) renderSettings();
   else if (state === 'menu') menuToast(muted ? 'SOUND OFF' : 'SOUND ON');
@@ -605,10 +617,10 @@ function screenName() {
   }
   return 'none';
 }
-function doRetry() { if (state !== 'finish') return; if (rally) { if (rally.phase === 'final') startRally(rally.region); } else startStage(stage.def.id); }
+function doRetry() { if (state !== 'finish') return; if (rally) { if (rally.phase === 'final') naturalBreak(() => startRally(rally.region)); } else naturalBreak(() => startStage(stage.def.id)); }
 function doNext() {
   if (state !== 'finish' || rally || isDaily(stage.def.id)) return;
-  startStage(nextId(stage.def.id));
+  naturalBreak(() => startStage(nextId(stage.def.id)));
 }
 const OVERLAY_OF = { pause: 'pause', finish: 'finish', duelres: 'duelFinish', rallyinter: 'rally', rallyfinal: 'rally' };
 
@@ -711,7 +723,7 @@ const onPadEdge = (k, b) => {
   if (b >= 12 || b === 4 || b === 5) document.body.classList.add('kbnav');
   onAction(PAD[b], 0);
 };
-document.addEventListener('visibilitychange', () => { if (document.hidden && (state === 'race' || state === 'countdown')) setPaused(true); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && (state === 'race' || state === 'countdown')) setPaused(true, true); });
 window.addEventListener('pointerdown', resumeAudio, { passive: true });
 window.addEventListener('gamepadconnected', () => { if (state === 'menu') showMenu(); });
 window.addEventListener('gamepaddisconnected', () => { if (state === 'menu') { if (!duelAvailable()) setMode('solo'); showMenu(); } });
@@ -737,7 +749,7 @@ $('rally').addEventListener('click', (e) => {
   const act = e.target.closest && e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
   if (act === 'continue') rallyContinue();
   else if (act === 'abandon' || act === 'menu') toMenu();
-  else if (act === 'again' && rally) startRally(rally.region);
+  else if (act === 'again' && rally) doRetry();
   else if (act === 'garage') toGarage();
 });
 for (const b of document.querySelectorAll('.seg-btn[data-mode]')) b.addEventListener('click', () => setMode(b.dataset.mode));
@@ -792,6 +804,7 @@ function updateCountdown(dt) {
   if (n === 'GO') {
     beepAll(880, 0.35);
     state = 'race'; hintsT = 0; ghostT = 0;
+    platform.gameplayStart();
     for (const p of racers) p.time = 0;
     setTimeout(() => { if (cdShown === 'GO') el.textContent = ''; }, 700);
     setScreen();
@@ -828,7 +841,7 @@ let last = performance.now(), acc = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, Math.max(0, (now - last) / 1000)); last = now;
-  if (!stage) return;
+  if (!stage || breakActive()) return; // an ad break freezes the game (sim, sound, render)
   pollPads(onPadEdge);
   const running = !paused && state !== 'boot';
   if (running) {
@@ -972,6 +985,8 @@ window.__game = {
   get time() { return players[0].time; },
   get times() { return racers.map((p) => p.time); },
   setAuto(b) { auto = !!b; },
+  get adBreak() { return breakActive(); },
+  get audioMuted() { return allSounds()[0].muted; }, // what the speakers do (player setting, ad break or portal mute)
 };
 
 function boot() {
@@ -989,6 +1004,7 @@ function boot() {
   if (params.get('start') === '1') startPick();
   else toMenu();
   $('loading').classList.add('fade');
+  platform.loadingStop();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(() => setTimeout(boot, 30));
