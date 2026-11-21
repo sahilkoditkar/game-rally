@@ -64,11 +64,11 @@ export const UPGRADES = [
       'Four-pot calipers: the latest braking and the steadiest.']),
   },
   {
-    id: 'suspension', name: 'Suspension', blurb: 'Rides bumps, jumps and the verge with less drama and less lost speed.',
+    id: 'suspension', name: 'Suspension', blurb: 'Loses far less speed and grip when you leave the road, and rides jumps and knocks calmly.',
     levels: lv(['Uprated dampers', 'Gravel suspension', 'Long-travel rally kit'], [
-      'Firmer dampers. Less lost on the rough stuff.',
-      'Gravel springs: shrugs off landings, kerbs and glancing knocks.',
-      'Long-travel kit with a raised ride height: the calmest car over anything.']),
+      'Firmer dampers: a little quicker through the rough when you run wide, and softer landings.',
+      'Gravel springs: much less bogged down off the road, and shrugs off kerbs and knocks.',
+      'Long-travel kit with a raised ride height: fastest and calmest in the rough, half the jostle.']),
   },
 ];
 
@@ -81,6 +81,10 @@ const TUNE = {
     offDrag: [0.17, 0.15, 0.13, 0.11], offFlat: [1.2, 1.05, 0.9, 0.75],
     landLoss: [0.015, 0.012, 0.009, 0.006], landCap: [0.15, 0.12, 0.09, 0.06], scrub: [0.06, 0.05, 0.04, 0.03],
     contactTol: [0.15, 0.18, 0.21, 0.24], lean: [1, 0.9, 0.8, 0.7], planted: [0, 0.035, 0.07, 0.105],
+    // deep rough (>3.5 m beyond the road edge, fully applied from 9 m)
+    roughFlat: [0.3, 0.223, 0.172, 0.14], roughDrag: [0.02, 0.0149, 0.0114, 0.0094], roughQuad: [0.0032, 0.00235, 0.00181, 0.00148],
+    roughSpin: [0.3, 0.27, 0.24, 0.21],
+    roughGrip: [0.17, 0.14, 0.11, 0.08], roughBrake: [0.5, 0.45, 0.4, 0.35], roughJolt: [0.5, 0.42, 0.34, 0.25],
   },
 };
 
@@ -206,6 +210,12 @@ const BASE = Object.freeze({
   landHit: 4, landLoss: 0.015, landCap: 0.15, // speed lost on hard landings
   scrub: 0.06,      // tangential speed lost on any obstacle contact
   contactTol: 0.15, // height above ground that still counts as tyre contact (micro-hops)
+  // deep rough beyond the verge (weight r = 0 at 3.5 m past the road edge .. 1 from 9 m)
+  roughFlat: 0.3, roughDrag: 0.02, roughQuad: 0.0032, // extra drag: flat m/s^2, per m/s and per (m/s)^2 (hard at speed)
+  roughSpin: 0.3,   // drive lost to wheelspin
+  roughGrip: 0.17,  // extra lateral grip lost (on top of offGripLoss)
+  roughBrake: 0.5,  // brake force lost
+  roughJolt: 0.5,   // yaw jostle from bumps, rad/s at speed
   planted: 0,       // extra lateral grip at speed from tyres staying planted over ruts (0 at 15 m/s .. full at 35)
   lean: 1,          // cosmetic body roll / pitch / bob scale
   gears: [0, 11, 19, 27, 36, 46],
@@ -230,7 +240,12 @@ function perf(h) {
   while (v < 27.78 && t < 20) { v += (h.power * Math.max(0, 1 - v / h.vmax) - h.roll - 0.03 * v) * dt; t += dt; }
   const brakeDist = (27.78 * 27.78) / (2 * (h.brake + h.roll + 0.03 * 14));
   const latG = GRIP * h.grip / 9.81;
-  return { top, t100: t, brakeDist, latG };
+  // steady top speed fully in the rough (flat, full throttle)
+  const pw = h.power * (1 - h.roughSpin);
+  // solve pw (1 - v/vmax) = roll + offFlat + roughFlat + v (0.03 + offDrag + roughDrag) + roughQuad v^2
+  const qa = h.roughQuad, qb = pw / h.vmax + 0.03 + h.offDrag + h.roughDrag, qc = h.roll + h.offFlat + h.roughFlat - pw;
+  const roughTop = qa > 0 ? (-qb + Math.sqrt(qb * qb - 4 * qa * qc)) / (2 * qa) : -qc / qb;
+  return { top, t100: t, brakeDist, latG, roughTop };
 }
 const STOCK_PERF = perf(BASE), MAX_PERF = perf(buildHandling({ engine: 3, tyres: 3, brakes: 3, suspension: 3 }));
 const span01 = (v, a, b) => clamp((v - a) / (b - a), 0, 1);
@@ -243,14 +258,27 @@ export function buildStats(build) {
     accel: map(-p.t100, -STOCK_PERF.t100, -MAX_PERF.t100),
     grip: lo + (hi - lo) * (0.6 * span01(h.grip, 1, 1.105) + 0.2 * span01(-h.offGripLoss, -0.25, -0.13) + 0.2 * span01(h.traction, 16, 20.5)),
     braking: lo + (hi - lo) * (0.7 * span01(-p.brakeDist, -STOCK_PERF.brakeDist, -MAX_PERF.brakeDist) + 0.3 * span01(h.tractionBrake, 16, 29.5)),
-    composure: lo + (hi - lo) * (0.25 * span01(-h.landLoss, -0.015, -0.006) + 0.25 * span01(-h.offDrag, -0.17, -0.11)
-      + 0.25 * span01(-h.scrub, -0.06, -0.03) + 0.25 * span01(h.contactTol, 0.15, 0.24)),
+    composure: lo + (hi - lo) * (0.5 * span01(p.roughTop, STOCK_PERF.roughTop, MAX_PERF.roughTop) + 0.2 * span01(-h.roughJolt, -0.5, -0.25)
+      + 0.15 * span01(-h.landLoss, -0.015, -0.006) + 0.15 * span01(-h.scrub, -0.06, -0.03)),
     lights: 0,
   };
   const L = { 'lamps-none': 0.3, 'lamps-pod': 0.6, 'lamps-big': 0.85 }[b.parts.lamps] + (b.parts.roof === 'roof-lamps' ? 0.15 : 0);
   stats.lights = clamp(L, 0, 1);
   for (const k in stats) stats[k] = Math.round(stats[k] * 1000) / 1000;
   return stats;
+}
+
+// deterministic rough-ground bumps: smooth value noise on a 2.5 m lattice, -1..1 (seed picks a channel)
+function hash2(ix, iz, seed) {
+  let h = Math.imul(ix, 374761393) ^ Math.imul(iz, 668265263) ^ Math.imul(seed, 1442695041);
+  h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16;
+  return (h >>> 0) / 2147483647.5 - 1;
+}
+export function roughBump(x, z, seed = 0) {
+  const fx = x / 2.5, fz = z / 2.5, ix = Math.floor(fx), iz = Math.floor(fz);
+  let u = fx - ix, v = fz - iz; u = u * u * (3 - 2 * u); v = v * v * (3 - 2 * v);
+  const a = hash2(ix, iz, seed), b = hash2(ix + 1, iz, seed), c = hash2(ix, iz + 1, seed), d = hash2(ix + 1, iz + 1, seed);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
 
 // ---------------------------------------------------------------- model
@@ -549,7 +577,7 @@ export class Car {
     this.x = 0; this.y = 0; this.z = 0; this.yaw = 0;
     this.vx = 0; this.vz = 0; this.vy = 0; this.yawRate = 0;
     this.speed = 0; this.vf = 0; this.slip = 0; this.steer = 0;
-    this.idx = 0; this.roadDist = 0; this.offroad = 0; this.grounded = true;
+    this.idx = 0; this.roadDist = 0; this.offroad = 0; this.rough = 0; this._roughRaw = 0; this.grounded = true;
     this.impact = 0; this.rpm = 0.25; this.gear = 1; this.throttle = 0;
     this.time = 0;
     this.aLat = 0; this.aLong = 0;   // low-passed accelerations (m/s^2), lateral +left
@@ -679,7 +707,7 @@ export class Car {
     this.y = stage.height(this.x, this.z);
     this.vx = this.vz = this.vy = 0; this.yawRate = 0;
     this.speed = this.vf = this.slip = 0; this.steer = 0; this._sIn = 0;
-    this.idx = idx; this.roadDist = 0; this.offroad = 0; this.grounded = true;
+    this.idx = idx; this.roadDist = 0; this.offroad = 0; this.rough = 0; this._roughRaw = 0; this.grounded = true;
     this.impact = 0; this.rpm = 0.25; this.gear = 1; this.throttle = 0; this._thrAvg = 0;
     this.aLat = this.aLong = 0; this.drift = 0; this.driftAngle = 0;
     this._bRoll = this._bRollV = this._bPitch = this._bPitchV = this._bob = this._bobV = 0;
@@ -709,6 +737,9 @@ export class Car {
     const n = stage.nearest(this.x, this.z, this.idx);
     if (n) { this.idx = n.i; this.roadDist = n.d; } else this.roadDist = 99;
     const off = this.offroad = smoothstep(ROAD_HALF + 0.5, ROAD_HALF + 5, this.roadDist);
+    // deep rough: nothing on the road or the verge (every rough term below is skipped when rr is 0)
+    const rr = this._roughRaw = smoothstep(ROAD_HALF + 3.5, ROAD_HALF + 9, this.roadDist);
+    this.rough += (rr - this.rough) * Math.min(1, 6 * dt);
 
     // ground
     const h = stage.height(this.x, this.z);
@@ -729,7 +760,8 @@ export class Car {
     this.steer = sN * maxSteer;
 
     const grip = stage.def.grip;
-    const baseLat = GRIP * K.grip * grip * (1 - K.offGripLoss * off) * (1 + K.planted * smoothstep(15, 35, speed));
+    let baseLat = GRIP * K.grip * grip * (1 - K.offGripLoss * off) * (1 + K.planted * smoothstep(15, 35, speed));
+    if (rr > 0) baseLat *= 1 - K.roughGrip * rr;
     let aLong = 0, aLat = 0;
     const beta = Math.atan2(vl, Math.abs(vf) + 1.5);
     if (contact) {
@@ -737,14 +769,17 @@ export class Car {
       let drive = 0, decel = 0;
       if (vf > -1) drive += thr * K.power * Math.max(0, 1 - vf / K.vmax);
       else drive += thr * 14;
+      if (rr > 0) drive *= 1 - K.roughSpin * rr; // wheelspin on loose rough
       const braking = brk > 0 && vf > 1;
       if (brk > 0) {
-        if (vf > 1) decel += brk * K.brake;
+        if (vf > 1) decel += rr > 0 ? brk * K.brake * (1 - K.roughBrake * rr) : brk * K.brake;
         else if (vf > -REV_MAX) drive -= brk * REV_ACC * Math.min(1, (vf + REV_MAX) / 2);
       }
       if (hand) decel += K.handDec;
       if (thr < 0.05 && vf > 2) decel += 1.1 + 0.025 * vf; // engine braking
       decel += K.roll + Math.abs(vf) * (0.03 + K.offDrag * off) + off * K.offFlat;
+      // rough drag; deeper going on slippery surfaces (snow, wet), a little lighter on hardpack
+      if (rr > 0) decel += rr * (K.roughFlat + K.roughDrag * Math.abs(vf) + K.roughQuad * vf * vf) / grip;
       drive -= 9.81 * slope * 0.7;
       const v0 = vf;
       vf += drive * dt;
@@ -790,6 +825,8 @@ export class Car {
       // anti-spin: pull back hard past the slide limit
       const bLim = hand ? 1.2 : K.betaLim + K.betaLimDrift * this.drift;
       if (Math.abs(beta) > bLim) target += Math.sign(beta) * (Math.abs(beta) - bLim) * 6;
+      // rough ground jostles the heading a little (deterministic bumps under the car)
+      if (rr > 0) target += K.roughJolt * rr * Math.min(1, speed / 20) * roughBump(this.x, this.z, 1);
       this.yawRate += (target - this.yawRate) * Math.min(1, K.yawResp * dt);
       aLong = (vf - v0) / dt;
     } else {
@@ -941,10 +978,18 @@ export class Car {
     const alpha = clamp(1 - (this.time - this._vt) / this._lastDt, 0, 1);
 
     // integrate the cosmetic springs in small fixed sub-steps so low frame rates stay stable
-    const rT = clamp(this.aLat * 0.009 * K.lean, -MAX_ROLL, MAX_ROLL);
-    const pT = clamp(-this.aLong * 0.005 * K.lean, -MAX_PITCH, MAX_PITCH);
+    let rT = this.aLat * 0.009 * K.lean, pT = -this.aLong * 0.005 * K.lean;
+    let heave = 0;
+    if (this.rough > 0.01) { // rough ground: deterministic bumps shake the body (scaled by speed and the suspension)
+      const j = this.rough * Math.min(1, this.speed / 18) * K.roughJolt / 0.5;
+      const bx = this.x * 0.6, bz = this.z * 0.6; // ~4 m body-sized swells
+      rT += j * 0.1 * roughBump(bx, bz, 2);
+      pT += j * 0.07 * roughBump(bx, bz, 3);
+      heave = j * 0.06 * roughBump(bx, bz, 4);
+    }
+    rT = clamp(rT, -MAX_ROLL, MAX_ROLL); pT = clamp(pT, -MAX_PITCH, MAX_PITCH);
     if (this._land > 0) { this._bobV -= Math.min(this._land, 12) * 0.2 * K.lean; this._land = 0; }
-    const rough = this.speed * (0.0015 + 0.008 * this.offroad) * K.lean;
+    const shake = this.speed * (0.0015 + 0.008 * this.offroad) * K.lean;
     const subs = Math.max(1, Math.ceil(dt / (1 / 240)));
     const h = dt / subs;
     for (let i = 0; i < subs; i++) {
@@ -952,10 +997,10 @@ export class Car {
       this._bRoll += this._bRollV * h;
       this._bPitchV += ((pT - this._bPitch) * 110 - this._bPitchV * 15) * h;
       this._bPitch += this._bPitchV * h;
-      this._bobV += (-this._bob * 220 - this._bobV * 16) * h;
+      this._bobV += ((heave - this._bob) * 220 - this._bobV * 16) * h;
       this._bob += this._bobV * h;
     }
-    this._bobV += (Math.random() - 0.5) * rough * Math.min(1, dt * 60);
+    this._bobV += (Math.random() - 0.5) * shake * Math.min(1, dt * 60);
     this._bRoll = clamp(this._bRoll, -MAX_ROLL, MAX_ROLL);
     this._bPitch = clamp(this._bPitch, -MAX_PITCH, MAX_PITCH);
     this._bob = clamp(this._bob, -0.1, 0.06);
@@ -1035,7 +1080,7 @@ export function autopilot(car, stage) {
   const av = Math.max(Math.abs(car.vf), 4);
   const maxSteer = K.lock0 - K.lockDrop * Math.min(1, speed / 42);
   const lat = GRIP * K.grip * stage.def.grip;
-  const wMax = Math.max(0.05, Math.min(Math.abs(car.vf) * Math.tan(maxSteer) / K.wb, lat * (1 - 0.25 * car.offroad) / av * K.yawMargin));
+  const wMax = Math.max(0.05, Math.min(Math.abs(car.vf) * Math.tan(maxSteer) / K.wb, lat * (1 - 0.25 * car.offroad) * (car._roughRaw > 0 ? 1 - K.roughGrip * car._roughRaw : 1) / av * K.yawMargin));
   _ai.steer = clamp(wDes / wMax * 1.25 + diff * 0.5, -1, 1);
 
   // speed plan: allowed speed at each upcoming sample, relaxed by braking distance

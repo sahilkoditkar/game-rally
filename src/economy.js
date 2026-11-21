@@ -16,6 +16,7 @@ export const EARN = {
   dailyFirst: 120,    // first finish of today's daily stage
   rally: 250,         // completing a rally
   rallyGold: 200,     // extra for a gold (or ace) rally trophy
+  cleanRun: 40,       // a stage with no penalties (every gate passed, no resets)
 };
 // purchases at or above this cost ask for a confirming second press
 export const CONFIRM_AT = 900;
@@ -126,6 +127,7 @@ export function stageEarnings(run) {
   if (gained > 0) lines.push([`New medal tier${gained > 1 ? ` ×${gained}` : ''}`, EARN.tierUp * gained]);
   if (run.isBest && run.hadPrev) lines.push(['Personal best', EARN.personalBest]);
   if (run.daily && profile.stats.dailyDone !== run.dateStr) lines.push(['Daily stage', EARN.dailyFirst]);
+  if (run.clean) lines.push(['Clean run', EARN.cleanRun]);
   return { total: lines.reduce((s, l) => s + l[1], 0), lines };
 }
 export function rallyEarnings(trophy) {

@@ -31,28 +31,30 @@ export class Dust {
     this.lifeK = rain ? 0.7 : 1;
   }
   clear() { this.age.fill(2); this.life.fill(1); }
-  emit(x, y, z, vx, vy, vz, size, life) {
+  emit(x, y, z, vx, vy, vz, size, life, shade = 0.88 + Math.random() * 0.12) {
     const i = this.next; this.next = (this.next + 1) % DUST_N;
     this.p[i * 3] = x; this.p[i * 3 + 1] = y; this.p[i * 3 + 2] = z;
     this.v[i * 3] = vx; this.v[i * 3 + 1] = vy * this.lift; this.v[i * 3 + 2] = vz;
     this.age[i] = 0; this.life[i] = life * this.lifeK; this.size[i] = size;
+    this.mesh.setColorAt(i, _c.setScalar(shade)); this.mesh.instanceColor.needsUpdate = true;
     this.rot[i * 3] = Math.random() * 6; this.rot[i * 3 + 1] = Math.random() * 6; this.rot[i * 3 + 2] = Math.random() * 6;
   }
   // rear-wheel emission for one car; carry is that car's [left, right] fractional puff counters
-  emitFrom(car, carry, dt) {
+  // rough (0..1): deep rough throws more, bigger and darker clods
+  emitFrom(car, carry, dt, rough = 0) {
     if (!car.grounded || car.speed < 1.5) { carry[0] = carry[1] = 0; return; }
     const sp = car.speed, slip = car.slip || 0, off = car.offroad || 0;
     // straight-line driving leaves a light trail; sliding (slip, drift) and verges throw much more
-    const rate = (sp * 0.45 + slip * slip * 0.9 + slip * 4) * (0.55 + off * 1.1) * (1 + 0.8 * (car.drift || 0)) * smoothstep(1.5, 6, sp);
+    const rate = (sp * 0.45 + slip * slip * 0.9 + slip * 4) * (0.55 + off * 1.1) * (1 + 0.8 * (car.drift || 0)) * (1 + 1.6 * rough) * smoothstep(1.5, 6, sp);
     for (let w = 0; w < 2; w++) {
       carry[w] += rate * dt;
       while (carry[w] >= 1) {
         carry[w] -= 1;
         car.wheelWorld(2 + w, _w);
-        const big = 1 + Math.min(slip, 10) * 0.04 + off * 0.25;
+        const big = 1 + Math.min(slip, 10) * 0.04 + off * 0.25 + rough * 0.3;
         this.emit(_w.x + rnd() * 0.5, _w.y + 0.25, _w.z + rnd() * 0.5,
           car.vx * 0.22 + rnd() * 2.4, 0.3 + Math.random() * 0.8, car.vz * 0.22 + rnd() * 2.4,
-          (0.45 + Math.random() * 0.35) * big, 0.75 + Math.random() * 0.5);
+          (0.45 + Math.random() * 0.35) * big, 0.75 + Math.random() * 0.5, rough > 0.2 ? 0.5 + Math.random() * 0.15 : undefined);
       }
     }
   }
@@ -84,7 +86,7 @@ export class Dust {
     this.mesh.instanceMatrix.needsUpdate = true;
   }
 }
-const _w = new THREE.Vector3();
+const _w = new THREE.Vector3(), _c = new THREE.Color();
 const rnd = () => Math.random() - 0.5;
 
 // ---------------------------------------------------------------- rain

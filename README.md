@@ -26,6 +26,22 @@ nothing is loaded from the network.
 | Menu: start the region's rally | `T` | | START RALLY |
 | Menu: Solo / Duel | `1` / `2` | | tap |
 
+### Rules
+
+Stages are lined with **gates**: pairs of flagged poles across the road. Drive between every pair; a
+floating marker shows your next gate (each player sees only their own in Duel). Penalties are added
+to your stage time, so they count everywhere: splits, finish, best times, medals, ghosts, rally totals
+and duel results. The numbers live in `src/rules.js`:
+
+| Penalty | Time |
+| --- | --- |
+| Missed gate (passing outside the flags, or skipping it) | +5.0 s |
+| Reset (`R`, or an automatic reset when you're off course or in the sea) | +2.0 s |
+
+Resets in the first 3 s after GO are free, and one incident never charges two resets within 1.5 s.
+A run with no penalties earns a **CLEAN RUN** badge and +40 CR. Deep rough slows you down, shakes the
+camera and throws dark clods, and an OFF ROAD sign shows by the speedometer.
+
 ### Medals
 
 Every stage has a par time (the reference autopilot's time). Beat **par × 1.35** for bronze,
@@ -57,6 +73,7 @@ pays out. The numbers live in one table (`EARN` in `src/economy.js`):
 | Beating your personal best | 50 |
 | First finish of today's Daily Stage | 120 |
 | Completing a rally (+200 for a gold or ace trophy) | 250 |
+| A clean run (no penalties) | 40 |
 
 Duel and abandoned runs earn nothing. The finish panel itemises every payout.
 
@@ -131,6 +148,7 @@ The other modules each handle one part:
 | `carapi.js` | the Rook's build API (upgrades, parts, paints) from car.js, with fallbacks |
 | `economy.js` | credits, the earn table, the saved profile and purchases |
 | `garage.js` | the Garage view: Tune and Style, previews, buying |
+| `rules.js` | gates, missed-gate and reset penalties, the next-gate marker |
 | `ghost.js` | ghost recording, compact storage codec, replay and the ghost-delta lookup |
 | `progress.js` | medals and medal points (derived from best times), rally pars, trophies and rally bests |
 | `input.js` | keyboard, gamepad and touch input |

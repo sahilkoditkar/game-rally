@@ -14,6 +14,7 @@ import { PAINTS, ACCENTS, DEFAULT_BUILD, normalizeBuild, buildStats } from './ca
 import { profile, offer, buy as buyItem, earn, countRun, setBuild as setProfileBuild, stageEarnings, rallyEarnings, anythingAffordable, ownsPaint, ownsAccent, EARN, costs } from './economy.js';
 import { renderGarage, garageKey, garagePreview, clearPreview, setGarageTab } from './garage.js';
 import { setStockLights } from './fx.js';
+import { Rules, GateMarker, roughOf, penaltyHtml } from './rules.js';
 import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults, renderRallyStage, renderRallyResults, earningsBlock } from './hud.js';
 import { renderMenu, renderMute, getViewRegion } from './menu.js';
 import { medalPoints, medalTimes, medalFor, medalRank, medalUp, rallyStages, rallyPar, parOf, trophyFor, getRallyBest, setRallyBest, medalSummary } from './progress.js';
@@ -78,6 +79,7 @@ const hasFinePointer = window.matchMedia && window.matchMedia('(any-pointer: fin
 if (isTouch) document.body.classList.add('touch');
 setStockLights(buildStats(DEFAULT_BUILD).lights); // headlights of a stock build look exactly as before upgrades
 const players = [new Player(0, scene, $('panes')), new Player(1, scene, $('panes'))];
+for (const p of players) { p.marker = new GateMarker(scene); p.rules = null; p.pen = 0; }
 let racers = [players[0]];
 let state = 'boot', paused = false;
 let auto = params.get('auto') === '1';
@@ -191,6 +193,7 @@ function setScreen() {
   const racing = state === 'countdown' || state === 'race' || state === 'finish';
   const duel = racers.length === 2, showResults = state === 'finish' && finishT > 1.1;
   document.body.classList.toggle('duel', duel && racing);
+  document.body.classList.toggle('results', showResults); // the results panels hide the HUD timer block behind them
   $('menu').classList.toggle('hidden', state !== 'menu');
   $('hud').classList.toggle('hidden', !racing);
   $('pause').classList.toggle('hidden', !paused);
@@ -265,6 +268,8 @@ function startStage(key) {
       p.lights.setEnabled(cond.night);
       p.resetRun();
       p.place(stage, stage.startIdx, racers.length === 2 ? (k === 0 ? 1.6 : -1.6) : 0); // P1 on the left, P2 on the right
+      p.rules = new Rules(stage); p.pen = 0; p.penFlashT = 0; p.roughOn = false;
+      p.marker.setGate(p.rules.nextGate, stage); p.marker.active = true;
     });
     preparePanes(racers, stage, cond, { targets: racers.length === 1 ? medalTimes(def) : null });
     recorder.reset(); ghostT = 0; ghostDeltaT = 0;
@@ -279,6 +284,7 @@ function startStage(key) {
 
 function toMenu() {
   paused = false;
+  for (const p of players) { p.rules = null; p.marker.active = false; p.marker.show(false); }
   rally = null;
   clearGhost();
   state = 'menu';
@@ -319,9 +325,35 @@ function setPaused(p) {
   setScreen();
 }
 
-function resetPlayer(p, notice) {
-  p.place(stage, clamp(p.car.idx | 0, 0, stage.n - 1));
+function resetPlayer(p, notice, auto = false) {
+  const idx = clamp(p.car.idx | 0, 0, stage.n - 1);
+  // penalties: a reset costs RESET_PENALTY (not in the first seconds, not for a pointless reset, never twice per incident)
+  // and any unpassed gates it jumps over count as missed
+  if (p.rules && state === 'race' && !p.done) {
+    const { ev, charge } = p.rules.reset(idx, p.time - p.pen, p.car, auto);
+    gateEvents(p, ev);
+    if (charge) penalize(p, charge, `RESET +${charge.toFixed(1)}`);
+  }
+  p.place(stage, idx);
   if (notice) showNotice(p, notice, 1.4);
+}
+// add seconds to a player's stage time (stage time = clock + penalties) and flash the chip
+function penalize(p, sec, label) {
+  p.time += sec; p.pen += sec;
+  if (racers.length === 1) recorder.penalty(p.time - p.pen, p.pen); // ghost: penalty event on the raw clock
+  p.penFlash = label; p.penFlashT = 2.5;
+  soundOf(p).beep(150, 0.28);
+}
+function gateEvents(p, ev) {
+  for (const e of ev) {
+    if (e.type === 'pass') { soundOf(p).beep(1568, 0.05); p.marker.flash(e.gate, stage, true); }
+    else {
+      p.marker.flash(e.gate, stage, false);
+      penalize(p, e.pen, `MISSED GATE +${e.pen.toFixed(1)}`);
+      if (!store.get('dustline.hint.gates', false)) { store.set('dustline.hint.gates', true); showNotice(p, 'Stay between the flags \u2014 missed gates cost 5 s', 4.5, 'hint'); }
+    }
+  }
+  if (ev.length) p.marker.setGate(p.rules.nextGate, stage);
 }
 
 function checkProgress(p) {
@@ -353,10 +385,11 @@ function playerFinish(p) {
     const newMedal = medalRank(medal) > medalRank(prevMedal);
     // credits: solo finishes only (duel and abandoned runs earn nothing)
     const firstEver = profile.stats.runs === 0;
-    const e = stageEarnings({ km: lengthOf(stage.def) / 1000, medal, prevMedal, isBest, hadPrev: !!prev, daily: isDaily(id), dateStr: stage.def.date });
+    const pen = p.rules ? p.rules.summary() : null, clean = !!pen && pen.total === 0;
+    const e = stageEarnings({ km: lengthOf(stage.def) / 1000, medal, prevMedal, isBest, hadPrev: !!prev, daily: isDaily(id), dateStr: stage.def.date, clean });
     earn(e.total, { daily: isDaily(id) ? stage.def.date : null }); countRun();
-    lastRun = { t, s, prev, isBest, medal, newMedal, up: medalUp(stage.def, t, medal), ghostSaved: false, earn: e };
-    recorder.sample(t, p.car, true);
+    lastRun = { t, s, prev, isBest, medal, newMedal, up: medalUp(stage.def, t, medal), ghostSaved: false, earn: e, pen };
+    recorder.sample(t - p.pen, p.car, true); // raw clock
     if (isBest) {
       const rec = recorder.build({ build: p.build, paint: p.paint.hex, time: t, splits: s });
       if (rec) lastRun.ghostSaved = saveGhost(id, rec) > 0;
@@ -365,6 +398,7 @@ function playerFinish(p) {
     const hint = firstEver ? `You earned ${e.total} CR \u2014 spend it in the <b>Garage</b> (V)` : anythingAffordable() ? 'Something new is affordable in the <b>Garage</b> (V)' : '';
     lastRun.hint = hint;
     $('finEarn').innerHTML = earningsBlock(e, profile.credits, hint);
+    $('finPen').innerHTML = penaltyHtml(pen);
   } else paneFinished(racers);
   if (racers.every((q) => q.done)) {
     state = 'finish'; finishT = 0;
@@ -385,7 +419,8 @@ function startRally(regionId) {
 function rallyStageDone() {
   const k = rally.idx, solo = racers.length === 1;
   racers.forEach((p, i) => {
-    rally.times[i][k] = p.time; rally.totals[i] += p.time;
+    rally.times[i][k] = p.time; rally.totals[i] += p.time; // stage times include penalties
+    rally.pens = rally.pens || [0, 0]; rally.pens[i] += p.pen;
     rally.medals[i][k] = solo ? lastRun.medal : null;
     rally.newMedals[i][k] = solo ? lastRun.newMedal : false;
   });
@@ -396,7 +431,7 @@ function rallyStageDone() {
     const parSoFar = parTotal == null ? null : rally.ids.slice(0, k + 1).reduce((s, id) => s + parOf(getDef(id)), 0);
     renderRallyStage({
       regionName: region.name, n: k + 1, of: rally.ids.length, stageName: names[k], nextName: names[k + 1], parTotal: parSoFar,
-      racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, time: rally.times[i][k], total: rally.totals[i], medal: rally.medals[i][k], newMedal: rally.newMedals[i][k], up: solo ? lastRun.up : null })),
+      racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, time: rally.times[i][k], total: rally.totals[i], medal: rally.medals[i][k], newMedal: rally.newMedals[i][k], up: solo ? lastRun.up : null, pen: p.pen, penHtml: penaltyHtml(p.rules && p.rules.summary()) })),
       earnHtml: solo ? earningsBlock(lastRun.earn, profile.credits, lastRun.hint) : '',
     });
   } else {
@@ -418,7 +453,7 @@ function rallyStageDone() {
     renderRallyResults({
       earnHtml,
       regionName: region.name, ids: rally.ids, names, parTotal, trophy, prev, isBest,
-      racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, times: rally.times[i], total: rally.totals[i], medals: rally.medals[i] })),
+      racers: racers.map((p, i) => ({ name: p.name, hex: p.paint.hex, times: rally.times[i], total: rally.totals[i], medals: rally.medals[i], pen: rally.pens ? rally.pens[i] : 0 })),
     });
   }
 }
@@ -543,7 +578,7 @@ function stepPhysics(dt) {
     else if (auto) { input = autopilot(car, stage); if (p.i === 1) input = { ...input, throttle: input.throttle * 0.86 }; }
     else input = readInput(p.i, racers.length === 1);
     car.step(dt, input, stage);
-    if (state === 'race' && !p.done) { p.time += dt; checkProgress(p); }
+    if (state === 'race' && !p.done) { p.time += dt; if (p.rules) gateEvents(p, p.rules.update(car)); checkProgress(p); }
   }
 }
 
@@ -552,14 +587,14 @@ function watchdog(p, dt) {
   const car = p.car;
   if (car.roadDist > 60 || !Number.isFinite(car.x) || car.y < -200) {
     if (state === 'menu') p.place(stage, stage.startIdx);
-    else resetPlayer(p, 'OFF COURSE');
+    else resetPlayer(p, 'OFF COURSE', true);
     return;
   }
   // coast stages: the seabed under the sea plane is drivable terrain, so treat going under water as off course
   const sea = stage.def.seaLevel;
   if (typeof sea === 'number' && car.y < sea - 0.6) {
     if (state === 'menu') p.place(stage, clamp(car.idx | 0, 0, stage.n - 1));
-    else { resetPlayer(p); showNotice(p, 'IN THE DRINK', 1.6, 'splash'); }
+    else { resetPlayer(p, null, true); showNotice(p, 'IN THE DRINK', 1.6, 'splash'); }
   }
   if (state === 'menu') {
     if (car.idx >= stage.finishIdx) p.place(stage, stage.startIdx); // attract mode loops the stage
@@ -588,6 +623,7 @@ function updateCountdown(dt) {
 }
 
 function renderPane(p) {
+  for (const q of players) q.marker.setVisibleFor(q === p && (state === 'race' || state === 'countdown'));
   aimSun(p, sun, sunDir);
   dust.layout(p.cam.position);
   rain.layout(p.cam.position);
@@ -631,14 +667,24 @@ function frame(now) {
       if (p.done) p.doneT += dt;
       watchdog(p, dt);
       p.car.updateVisual(dt);
-      dust.emitFrom(p.car, p.carry, dt);
+      dust.emitFrom(p.car, p.carry, dt, state === 'race' || state === 'finish' ? roughOf(p.car) : 0);
     }
     // ghost: record the solo run, replay the stored best on the race clock
-    if (racers.length === 1 && state === 'race' && !racers[0].done) recorder.sample(racers[0].time, racers[0].car);
-    if (state === 'race' || state === 'finish') ghostT += dt;
+    if (racers.length === 1 && state === 'race' && !racers[0].done) recorder.sample(racers[0].time - racers[0].pen, racers[0].car); // raw clock
+    // the ghost replays on the player's RAW clock, so it moves smoothly whoever is penalised; penalties enter the delta only
+    if (state === 'race' && racers.length === 1 && !racers[0].done) ghostT = racers[0].time - racers[0].pen;
+    else if (state === 'race' || state === 'finish') ghostT += dt;
     dust.step(dt);
     rain.step(dt);
   } else acc = 0;
+  for (const p of players) {
+    p.marker.update(running ? dt : 0);
+    if (p.penFlashT > 0) p.penFlashT -= dt;
+    // deep rough: a shake scaled by rough x speed, and the OFF ROAD indicator (with hysteresis); the verge stays calm
+    p.rough = racers.includes(p) && state !== 'menu' ? roughOf(p.car) : 0;
+    if (running && p.rough > 0.05 && p.car.grounded !== false) p.shake = Math.max(p.shake, p.rough * Math.min(1, p.car.speed / 22) * 0.42);
+    p.roughOn = p.roughOn ? p.rough > 0.4 : p.rough > 0.5;
+  }
   const snds = modeSounds();
   racers.forEach((p, k) => {
     const car = p.car;
@@ -656,7 +702,7 @@ function frame(now) {
     ghostDeltaT -= dt;
     if (ghostDeltaT <= 0 && state === 'race' && !me.done) {
       ghostDeltaT = 0.2;
-      const gt = ghost.timeAtIdx(me.car.idx);
+      const gt = ghost.totalAtIdx(me.car.idx); // ghost raw time there + its penalties so far
       ghostDelta = gt == null || me.car.idx <= stage.startIdx ? null : me.time - gt;
     }
   }
@@ -691,8 +737,10 @@ window.__game = {
   startRally: (regionId) => startRally(regionId),
   get rally() { return rally ? { region: rally.region, stages: rally.ids.slice(), stage: rally.idx + 1, of: rally.ids.length, phase: rally.phase, totals: rally.totals.slice(0, racers.length), times: rally.times.slice(0, racers.length).map((a) => a.slice()) } : null; },
   medals: () => medalSummary(),
-  get ghost() { return ghost ? { time: ghost.time, build: ghost.rec.build || null, carId: ghost.rec.carId || null, active: ghostOn && ghost.car.group.visible, delta: ghostDelta, t: ghostT } : null; },
+  get ghost() { return ghost ? { time: ghost.time, build: ghost.rec.build || null, carId: ghost.rec.carId || null, active: ghostOn && ghost.car.group.visible, delta: ghostDelta, t: ghostT, v: ghost.rec.v, pens: ghost.rec.pens || [], pos: ghost.car.group.position.toArray() } : null; },
   get ghostOn() { return ghostOn; },
+  get penalties() { return racers.map((p) => (p.rules ? p.rules.summary() : null)); },
+  get gates() { return stage ? (racers[0].rules ? racers[0].rules.gates.map((g) => ({ ...g })) : null) : null; },
   get profile() { return JSON.parse(JSON.stringify(profile)); },
   get builds() { return racers.map((p) => p.build); },
   buy(kind, id) { const r = buyItem(kind, id); if (state === 'menu') { showroom(); showMenu(); } return r; },
