@@ -3,6 +3,10 @@ import { mergeGeometries } from '../vendor/BufferGeometryUtils.js';
 
 export const STEP = 2;
 export const ROAD_HALF = 3.6;
+// checkpoint gates: valid opening is |lateral offset| < GATE_HALF from the road centreline at gate.idx
+export const GATE_HALF = ROAD_HALF + 2.6;
+const GATE_POLE_OUT = 0.4, GATE_CORNER_CURV = 0.012, GATE_MIN_GAP = 55, GATE_MAX_GAP = 170, GATE_END_CLEAR = 40, GATE_SPLIT_CLEAR = 15;
+const GATE_COLORS = { inside: '#ff6a13', outside: '#ff3fb4' }; // pennants: orange inside of the corner, magenta outside
 
 // Stage defs. Shape: seed, points, twist, sharp, hills (these alone decide the road). Feel: grip, flora.
 // Palette: sky [top, horizon], fog, fogRange, ground[3], rock, verge, road[2], dust, sun, sunPos, ambient [sky, ground].
@@ -282,6 +286,7 @@ export class Stage {
     this.buildTerrain();
     this.buildRoad();
     this.buildScenery();
+    this.buildGates(); // after scenery, no RNG
   }
 
   baseH(x, z) {
@@ -716,6 +721,110 @@ export class Stage {
       m.position.set(this.sx[i] + this.tz[i] * 5 * s, this.sy[i] - 0.1, this.sz[i] - this.tx[i] * 5 * s);
       m.rotation.y = Math.atan2(this.tx[i], this.tz[i]);
       this.group.add(m);
+    }
+  }
+
+  // Checkpoint gates (anti corner-cutting). Pure function of the path: no RNG, so nothing else changes.
+  // Apex gate on every real corner, then fill so no gap exceeds GATE_MAX_GAP; min spacing GATE_MIN_GAP;
+  // kept clear of the start/finish gates (GATE_END_CLEAR) and the split flags (GATE_SPLIT_CLEAR).
+  placeGates() {
+    const S = (m) => Math.round(m / STEP);
+    const lo = this.startIdx + S(GATE_END_CLEAR), hi = this.finishIdx - S(GATE_END_CLEAR);
+    const minGap = S(GATE_MIN_GAP), maxGap = S(GATE_MAX_GAP), splitClr = S(GATE_SPLIT_CLEAR);
+    const ac = (i) => Math.abs(this.curv[i]);
+    const nearSplit = (i) => this.splits.some((s) => Math.abs(i - s) < splitClr);
+    const ok = (i, list) => i >= lo && i <= hi && !nearSplit(i) && list.every((g) => Math.abs(g - i) >= minGap);
+    // nearest admissible index to i within ±r samples (prefers i itself), or -1
+    const nudge = (i, list, r) => { for (let k = 0; k <= r; k++) for (const j of [i - k, i + k]) if (ok(j, list)) return j; return -1; };
+    // 1) corner apexes: local maxima of |curv| over ±4 samples, tightest first, merged within ~55 m
+    const cand = [];
+    for (let i = lo; i <= hi; i++) {
+      const c = ac(i); if (c < GATE_CORNER_CURV) continue;
+      let peak = true;
+      for (let k = -4; k <= 4 && peak; k++) if (k && ac(clamp(i + k, 0, this.n - 1)) > c) peak = false;
+      if (peak) cand.push(i);
+    }
+    cand.sort((a, b) => ac(b) - ac(a) || a - b);
+    const g = [];
+    for (const i of cand) { const j = nudge(i, g, 6); if (j >= 0) g.push(j); }
+    // 2) fill long stretches (start/finish count as gates), evenly, nudging off split flags
+    for (let guard = 0; guard < 200; guard++) {
+      const all = [this.startIdx, ...g.slice().sort((a, b) => a - b), this.finishIdx];
+      let worst = -1, wl = maxGap;
+      for (let k = 0; k < all.length - 1; k++) if (all[k + 1] - all[k] > wl) { wl = all[k + 1] - all[k]; worst = k; }
+      if (worst < 0) break;
+      const a = all[worst], b = all[worst + 1], parts = Math.ceil((b - a) / maxGap);
+      const j = nudge(Math.round(a + (b - a) / parts), g, Math.round((b - a) / parts / 2));
+      if (j < 0) break;
+      g.push(j);
+    }
+    g.sort((a, b) => a - b);
+    this.gates = g.map((i) => ({ idx: i, x: this.sx[i], y: this.sy[i], z: this.sz[i], tx: this.tx[i], tz: this.tz[i], half: GATE_HALF }));
+  }
+
+  buildGates() {
+    this.placeGates();
+    if (!this.gates.length) return;
+    // slim two-piece pole (top segment raked back, like a sprung marker wand) + reflective bands + pennant
+    const pole = merge([
+      part(new THREE.CylinderGeometry(0.06, 0.075, 2.0, 5), '#f4f4f0', 0, 1.0, 0),
+      part(new THREE.CylinderGeometry(0.085, 0.085, 0.25, 5), '#ff6a13', 0, 1.25, 0),
+      part(new THREE.CylinderGeometry(0.045, 0.06, 1.1, 5).translate(0, 0.55, 0).rotateX(-0.12), '#f4f4f0', 0, 2.0, 0),
+      part(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 5).translate(0, 0.25, 0).rotateX(-0.12), '#ff6a13', 0, 2.0, 0),
+      part(new THREE.CylinderGeometry(0.14, 0.16, 0.1, 6), '#3a3a40', 0, 0.05, 0),
+    ]);
+    const pg = new THREE.BufferGeometry(); // pennant, both faces, trailing the pole (local -Z), slight droop
+    const P = [0, 3.06, -0.13, 0, 2.2, -0.07, 0.05, 2.55, -1.45];
+    pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array([...P, P[0], P[1], P[2], P[6], P[7], P[8], P[3], P[4], P[5]]), 3));
+    pg.computeVertexNormals();
+    const pennant = paint(pg, '#ffffff');
+    const N = this.gates.length * 2;
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: '#1a1208' });
+    const pm = new THREE.InstancedMesh(pole, mat, N), fm = new THREE.InstancedMesh(pennant, mat, N);
+    const o = new THREE.Object3D(), col = new THREE.Color();
+    let k = 0;
+    this._gatePoles = [];
+    for (const gt of this.gates) {
+      const i = gt.idx, c = this.curv[i];
+      for (const side of [-1, 1]) { // side +1 = left of travel (lat > 0); inside of a left-hander (curv > 0)
+        const off = (GATE_HALF + GATE_POLE_OUT) * side;
+        const x = this.sx[i] + this.tz[i] * off, z = this.sz[i] - this.tx[i] * off;
+        o.position.set(x, this.height(x, z, true) - 0.05, z);
+        o.rotation.set(0, Math.atan2(this.tx[i], this.tz[i]), 0); o.scale.set(1, 1, 1); o.updateMatrix();
+        pm.setMatrixAt(k, o.matrix); fm.setMatrixAt(k, o.matrix);
+        pm.setColorAt(k, col.set('#ffffff'));
+        const inside = Math.abs(c) > 0.006 ? Math.sign(c) === side : side > 0;
+        fm.setColorAt(k, col.set(inside ? GATE_COLORS.inside : GATE_COLORS.outside));
+        this._gatePoles.push(x, z);
+        k++;
+      }
+    }
+    pm.castShadow = true; fm.castShadow = true; pm.userData.gate = fm.userData.gate = true;
+    pm.computeBoundingSphere(); fm.computeBoundingSphere();
+    this.group.add(pm, fm);
+    this.clearGateOpenings();
+  }
+
+  // hide (scale 0, instance counts unchanged) any scenery instance standing in a gate opening or on a pole
+  clearGateOpenings() {
+    const m = new THREE.Matrix4(), p = new THREE.Vector3(), zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    const gates = this.gates, poles = this._gatePoles;
+    this.hiddenForGates = 0;
+    for (const mesh of this.group.children) {
+      if (!mesh.isInstancedMesh || mesh.userData.gate) continue;
+      let dirty = false;
+      for (let k = 0; k < mesh.count; k++) {
+        mesh.getMatrixAt(k, m); p.setFromMatrixPosition(m);
+        let hit = false;
+        for (const g of gates) {
+          const dx = p.x - g.x, dz = p.z - g.z; if (dx * dx + dz * dz > 400) continue;
+          const along = dx * g.tx + dz * g.tz, lat = dx * g.tz - dz * g.tx;
+          if (Math.abs(along) < 2.5 && Math.abs(lat) < GATE_HALF + GATE_POLE_OUT + 0.8) { hit = true; break; }
+        }
+        for (let q = 0; q < poles.length && !hit; q += 2) { const dx = p.x - poles[q], dz = p.z - poles[q + 1]; if (dx * dx + dz * dz < 1.44) hit = true; }
+        if (hit) { mesh.setMatrixAt(k, zero); dirty = true; this.hiddenForGates++; }
+      }
+      if (dirty) { mesh.instanceMatrix.needsUpdate = true; mesh.computeBoundingSphere(); }
     }
   }
 
