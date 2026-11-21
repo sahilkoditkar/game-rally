@@ -1,11 +1,12 @@
-// Settings overlay: Sound, Ghost and a Controls reference (Keyboard / Gamepad / Touch).
+// Settings overlay: Sound (+ Music / Effects volume sliders), Ghost and a Controls reference (Keyboard / Gamepad / Touch).
 // Opened from the menu's gear, Esc in PLAY, gamepad Y in the menu and Pause > Settings. Keyboard and pad
 // navigate it by rows (up / down), left / right toggle a row or switch the controls tab, Enter / A activates.
 import { $ } from './util.js';
 
 const CTL_TABS = [['keyboard', 'Keyboard'], ['gamepad', 'Gamepad'], ['touch', 'Touch']];
 const S = { open: false, focus: 0, ctl: 'keyboard', ctx: null, opener: null };
-// ctx: { muted(), ghostOn(), defaultCtl(), onMute(), onGhost(), onClose() }
+// ctx: { muted(), ghostOn(), defaultCtl(), onMute(), onGhost(), onClose(), volume(kind), onVolume(kind, v, final) }
+const VOLS = [['music', 'Music'], ['sfx', 'Effects']];
 
 const k = (...xs) => xs.map((x) => `<kbd>${x}</kbd>`).join('');
 const table = (rows, head) => `<table class="ctl-table">${head ? `<tr class="hd">${head.map((h) => `<td>${h}</td>`).join('')}</tr>` : ''}${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</table>`;
@@ -36,14 +37,39 @@ export function renderSettings() {
   const c = S.ctx, sound = !c.muted(), ghost = c.ghostOn();
   $('setRows').innerHTML = `
     <div class="set-row" data-nav data-row="sound"><span class="set-l">Sound</span>${seg2('sound', sound)}<kbd class="set-k">M</kbd></div>
+    ${VOLS.map(([kind, name]) => volRow(kind, name, sound)).join('')}
     <div class="set-row" data-nav data-row="ghost"><span class="set-l">Ghost<small>Race your saved best run (solo only)</small></span>${seg2('ghost', ghost)}<kbd class="set-k">G</kbd></div>
     <div class="set-ctl" data-nav data-row="controls">
       <div class="set-ctl-head"><span class="set-l">Controls</span><div class="seg ctl-tabs" role="tablist">${CTL_TABS.map(([id, n]) => `<button class="seg-btn${S.ctl === id ? ' sel' : ''}" data-ctl="${id}" role="tab" aria-selected="${S.ctl === id}">${n}</button>`).join('')}</div></div>
       <div class="ctl-body">${CONTROLS[S.ctl]()}</div>
     </div>`;
   for (const b of document.querySelectorAll('#setRows [data-v]')) b.addEventListener('click', () => setRow(b.dataset.row, b.dataset.v === 'on'));
+  for (const r of document.querySelectorAll('#setRows [data-vol]')) {
+    const kind = r.dataset.vol;
+    r.addEventListener('pointerdown', () => { S.focus = rows().findIndex((x) => x.dataset.row === kind); markFocus(); });
+    r.addEventListener('input', () => { S.ctx.onVolume(kind, r.value / 100, false); paintVol(kind); }); // live while dragging
+    r.addEventListener('change', () => { S.ctx.onVolume(kind, r.value / 100, true); paintVol(kind); r.blur(); }); // released
+  }
   for (const b of document.querySelectorAll('#setRows [data-ctl]')) b.addEventListener('click', () => { S.ctl = b.dataset.ctl; renderSettings(); });
   markFocus();
+}
+// volume rows: a 0-100 slider (step 5) and its value; ← → step it when the row has the focus
+function volRow(kind, name, sound) {
+  const v = Math.round(S.ctx.volume(kind) * 100);
+  return `<div class="set-row set-vol${sound ? '' : ' off'}" data-nav data-row="${kind}"><span class="set-l">${name}</span>`
+    + `<input class="vol-range" type="range" min="0" max="100" step="5" value="${v}" data-vol="${kind}" tabindex="-1" aria-label="${name} volume" style="--v:${v}%">`
+    + `<output class="vol-v" data-volv="${kind}">${v}</output></div>`;
+}
+function paintVol(kind) {
+  const r = document.querySelector(`#setRows [data-vol="${kind}"]`), o = document.querySelector(`#setRows [data-volv="${kind}"]`);
+  const v = Math.round(S.ctx.volume(kind) * 100);
+  if (r) { if (+r.value !== v) r.value = v; r.style.setProperty('--v', `${v}%`); }
+  if (o) o.textContent = v;
+}
+function stepVol(kind, d) {
+  const v = Math.max(0, Math.min(100, Math.round(S.ctx.volume(kind) * 20) * 5 + d * 5));
+  S.ctx.onVolume(kind, v / 100, true);
+  paintVol(kind);
 }
 function setRow(row, on) {
   const c = S.ctx;
@@ -81,6 +107,7 @@ export function settingsKey(a) {
   if (a === 'left' || a === 'right' || a === 'activate') {
     if (row === 'sound') setRow('sound', S.ctx.muted());
     else if (row === 'ghost') setRow('ghost', !S.ctx.ghostOn());
+    else if (row === 'music' || row === 'sfx') { if (a !== 'activate') stepVol(row, a === 'left' ? -1 : 1); }
     else if (row === 'controls') stepCtl(a === 'left' ? -1 : 1);
     else if (row === 'done' && a === 'activate') closeSettings();
   }
