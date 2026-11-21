@@ -120,6 +120,23 @@ the gap and a split-by-split comparison. Duel times are not saved as solo record
 
 Duel needs a keyboard or two gamepads, so the SOLO / DUEL pill is hidden on touch-only devices.
 
+## Audio
+
+Everything you hear is generated in the browser with WebAudio: no samples, no audio files.
+
+- **Effects**: the engine, gravel, tyre scrub, impacts and beeps (one panned set per car in Duel).
+- **Music**: a small procedural sequencer (`music` in `src/audio.js`). The menu has a slow, warm pad with a sparse
+  plucked arpeggio. Stages get a steady driving pulse (soft kick and bass, arpeggio, pad) whose key, timbre and tempo
+  follow the region: forest is warm and woody, desert brighter with a twang, snow glassy and sparse, coast a breezy
+  major. Night is darker and a little slower and rain is mellower. Each stage seeds its own pair of chord
+  progressions, and the arrangement changes every 8 bars. The music opens up a little with speed and drops by about
+  10 dB while paused. On the results screen a short chord rings out, then the music drifts back into the menu bed.
+- **Settings › Sound** switches all audio on or off (`M`). The **Music** and **Effects** sliders (0–100) are
+  below it: drag them, or focus the row and use `←` `→` (d-pad on a gamepad). They are saved in your browser
+  (`dustline.vol`).
+
+Nothing is created or played until your first click, tap or key press.
+
 ## Run locally
 
 ES modules need to be served over HTTP (opening `index.html` from disk won't work). Any
@@ -145,13 +162,13 @@ The other modules each handle one part:
 | --- | --- |
 | `track.js` | stage definitions, regions, the daily stage and terrain/road/scenery generation |
 | `car.js` | car model, physics and autopilot |
-| `audio.js` | procedural engine, gravel and beep sounds |
+| `audio.js` | procedural engine, gravel and beep sounds, the procedural music, effects / music volume buses |
 | `catalog.js` | menu order, region and daily lookups, stage lengths and conditions (falls back to defaults if track.js lacks them) |
 | `fx.js` | dust and spray puffs, rain streaks, night headlights |
 | `player.js` | one racer: car, chase/orbit camera, viewport and timing |
 | `hud.js` | per-player HUD panes (fixed slots: timer + penalty chip, two sub-chips, rally and gate pills by the progress bar, OFF ROAD) and the result panels |
 | `menu.js` | main menu: top bar, Play / Garage tabs, region and Daily tabs (the tab is the selection), stage / rally / daily entries, the START label |
-| `settings.js` | the Settings overlay: sound, ghost and the controls reference (keyboard / gamepad / touch) |
+| `settings.js` | the Settings overlay: sound, music / effects volume, ghost and the controls reference (keyboard / gamepad / touch) |
 | `nav.js` | roving keyboard / gamepad focus on the pause and result panels |
 | `carapi.js` | the Rook's build API (upgrades, parts, paints) from car.js, with fallbacks |
 | `economy.js` | credits, the earn table, the saved profile and purchases |
