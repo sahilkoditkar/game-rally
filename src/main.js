@@ -340,6 +340,7 @@ function resetPlayer(p, notice, auto = false) {
 // add seconds to a player's stage time (stage time = clock + penalties) and flash the chip
 function penalize(p, sec, label) {
   p.time += sec; p.pen += sec;
+  if (racers.length === 1) recorder.penalty(p.time - p.pen, p.pen); // ghost: penalty event on the raw clock
   p.penFlash = label; p.penFlashT = 2.5;
   soundOf(p).beep(150, 0.28);
 }
@@ -388,7 +389,7 @@ function playerFinish(p) {
     const e = stageEarnings({ km: lengthOf(stage.def) / 1000, medal, prevMedal, isBest, hadPrev: !!prev, daily: isDaily(id), dateStr: stage.def.date, clean });
     earn(e.total, { daily: isDaily(id) ? stage.def.date : null }); countRun();
     lastRun = { t, s, prev, isBest, medal, newMedal, up: medalUp(stage.def, t, medal), ghostSaved: false, earn: e, pen };
-    recorder.sample(t, p.car, true);
+    recorder.sample(t - p.pen, p.car, true); // raw clock
     if (isBest) {
       const rec = recorder.build({ build: p.build, paint: p.paint.hex, time: t, splits: s });
       if (rec) lastRun.ghostSaved = saveGhost(id, rec) > 0;
@@ -669,9 +670,9 @@ function frame(now) {
       dust.emitFrom(p.car, p.carry, dt, state === 'race' || state === 'finish' ? roughOf(p.car) : 0);
     }
     // ghost: record the solo run, replay the stored best on the race clock
-    if (racers.length === 1 && state === 'race' && !racers[0].done) recorder.sample(racers[0].time, racers[0].car);
-    // the ghost replays on the player's stage time (clock + penalties), so a penalty lets it pull ahead by exactly that much
-    if (state === 'race' && racers.length === 1 && !racers[0].done) ghostT = racers[0].time;
+    if (racers.length === 1 && state === 'race' && !racers[0].done) recorder.sample(racers[0].time - racers[0].pen, racers[0].car); // raw clock
+    // the ghost replays on the player's RAW clock, so it moves smoothly whoever is penalised; penalties enter the delta only
+    if (state === 'race' && racers.length === 1 && !racers[0].done) ghostT = racers[0].time - racers[0].pen;
     else if (state === 'race' || state === 'finish') ghostT += dt;
     dust.step(dt);
     rain.step(dt);
@@ -701,7 +702,7 @@ function frame(now) {
     ghostDeltaT -= dt;
     if (ghostDeltaT <= 0 && state === 'race' && !me.done) {
       ghostDeltaT = 0.2;
-      const gt = ghost.timeAtIdx(me.car.idx);
+      const gt = ghost.totalAtIdx(me.car.idx); // ghost raw time there + its penalties so far
       ghostDelta = gt == null || me.car.idx <= stage.startIdx ? null : me.time - gt;
     }
   }
@@ -736,7 +737,7 @@ window.__game = {
   startRally: (regionId) => startRally(regionId),
   get rally() { return rally ? { region: rally.region, stages: rally.ids.slice(), stage: rally.idx + 1, of: rally.ids.length, phase: rally.phase, totals: rally.totals.slice(0, racers.length), times: rally.times.slice(0, racers.length).map((a) => a.slice()) } : null; },
   medals: () => medalSummary(),
-  get ghost() { return ghost ? { time: ghost.time, build: ghost.rec.build || null, carId: ghost.rec.carId || null, active: ghostOn && ghost.car.group.visible, delta: ghostDelta, t: ghostT } : null; },
+  get ghost() { return ghost ? { time: ghost.time, build: ghost.rec.build || null, carId: ghost.rec.carId || null, active: ghostOn && ghost.car.group.visible, delta: ghostDelta, t: ghostT, v: ghost.rec.v, pens: ghost.rec.pens || [], pos: ghost.car.group.position.toArray() } : null; },
   get ghostOn() { return ghostOn; },
   get penalties() { return racers.map((p) => (p.rules ? p.rules.summary() : null)); },
   get gates() { return stage ? (racers[0].rules ? racers[0].rules.gates.map((g) => ({ ...g })) : null) : null; },

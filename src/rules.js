@@ -8,7 +8,8 @@ export const GATE_PENALTY = 5.0;   // s, per missed gate
 export const RESET_PENALTY = 2.0;  // s, per manual or automatic reset
 export const RESET_GRACE = 3.0;    // s after GO during which resets are free
 export const RESET_DEDUPE = 1.5;   // s: one incident never charges two reset penalties
-const JUMP = 8;                    // samples: crossing a gate this far behind the car means it was skipped, not driven through
+const JUMP = 8;
+const POLE_OUT = 0.4;               // poles stand this far outside the valid opening (matches track.js)                    // samples: crossing a gate this far behind the car means it was skipped, not driven through
 
 // ---------------------------------------------------------------- gates (track.js provides stage.gates; fallback until it does)
 export function stageGates(stage) {
@@ -122,7 +123,8 @@ export class GateMarker {
     this.base = new THREE.Vector3(g.x, y + 4.6, g.z);
     this.group.position.copy(this.base);
     this.group.rotation.y = Math.atan2(g.tx, g.tz);
-    this.glows[0].position.set(g.half, -1.8, 0); this.glows[1].position.set(-g.half, -1.8, 0);
+    // on the actual poles (track.js puts them GATE_POLE_OUT = 0.4 m outside the opening)
+    this.glows[0].position.set(g.half + POLE_OUT, -1.8, 0); this.glows[1].position.set(-(g.half + POLE_OUT), -1.8, 0);
   }
   flash(g, stage, ok) {
     if (!g) return;

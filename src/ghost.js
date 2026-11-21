@@ -64,7 +64,8 @@ export function loadGhost(stageId) {
     const raw = localStorage.getItem(KEY(stageId));
     if (!raw) return null;
     const g = JSON.parse(raw);
-    if (!g || g.v !== 1 || !g.samples || !(g.time > 0)) return null;
+    // v1: no penalties; v2: sample times are the RAW race clock, pens = [[tRaw, cumulativePenalty], ...]
+    if (!g || (g.v !== 1 && g.v !== 2) || !g.samples || !(g.time > 0)) return null;
     return g;
   } catch { return null; }
 }
@@ -96,9 +97,11 @@ export function pruneDailyGhosts(today = localDateStr()) {
 // ---------------------------------------------------------------- recording
 const _pose = {};
 export class GhostRecorder {
-  constructor() { this.samples = []; this.next = 0; }
-  reset() { this.samples = []; this.next = 0; }
-  // call once per rendered frame while racing, after car.updateVisual
+  constructor() { this.samples = []; this.next = 0; this.pens = []; }
+  reset() { this.samples = []; this.next = 0; this.pens = []; }
+  // a penalty landed at raw clock tRaw; cum = the run's total penalty so far
+  penalty(tRaw, cum) { this.pens.push([Math.round(tRaw * 1000) / 1000, Math.round(cum * 1000) / 1000]); }
+  // call once per rendered frame while racing, after car.updateVisual; t = RAW race clock (no penalties)
   sample(t, car, force = false) {
     if (!force && t < this.next) return;
     const p = car.getPose ? car.getPose(_pose) : { x: car.x, y: car.y, z: car.z, yaw: car.yaw, pitch: 0, roll: 0, steer: 0 };
@@ -107,7 +110,8 @@ export class GhostRecorder {
   }
   build(meta) {
     if (this.samples.length < 2) return null;
-    return { v: 1, ...meta, hz: GHOST_HZ, samples: encodeSamples(this.samples) };
+    // meta.time stays the stage time incl. penalties (= the best time); samples run on the raw clock
+    return { v: 2, ...meta, hz: GHOST_HZ, pens: this.pens.slice(), samples: encodeSamples(this.samples) };
   }
 }
 
@@ -132,8 +136,16 @@ export class GhostPlayer {
     this.place(0);
   }
   get time() { return this.rec.time; }
+  // cumulative ghost penalty at its raw clock time tRaw (old v1 records have none)
+  penAt(tRaw) {
+    let pen = 0;
+    for (const [t, c] of this.rec.pens || []) { if (t <= tRaw + 1e-6) pen = c; else break; }
+    return pen;
+  }
+  // the ghost's stage time (raw + its penalties) when it reached track sample idx, or null
+  totalAtIdx(idx) { const t = this.timeAtIdx(idx); return t == null ? null : t + this.penAt(t); }
   setVisible(v) { this.visible = v; this.car.group.visible = v && this.opacity > 0.01; }
-  // pose at race time t (holds the final pose after the ghost finished, fades out ~3 s later)
+  // pose at RAW race clock t (holds the final pose after the ghost finished, fades out ~3 s later)
   place(t, playerPos = null) {
     const S = this.S, n = S.n;
     if (t <= S.t[0]) this.k = 0;
@@ -147,7 +159,8 @@ export class GhostPlayer {
     this.lastX = x; this.lastZ = z;
     this.car.setPose(x, y, z, lerpAng(S.yaw[a], S.yaw[b], f), L(S.pitch), L(S.roll), L(S.steer), this.spin);
     // fade: after the ghost's finish, and when the camera car sits inside it (e.g. the shared start line)
-    let op = 1 - smoothstep(this.rec.time + 1.5, this.rec.time + 3.5, t);
+    const tEnd = S.t[n - 1];
+    let op = 1 - smoothstep(tEnd + 1.5, tEnd + 3.5, t);
     if (playerPos) op *= 0.25 + 0.75 * smoothstep(1.8, 4.5, Math.hypot(x - playerPos.x, z - playerPos.z));
     this.opacity = op;
     for (const m of this.mats) m.opacity = this.baseOpacity * op;
