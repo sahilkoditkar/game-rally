@@ -118,7 +118,7 @@ export function updatePanes(racers, stage, state, rally, ghostDelta) {
         const d = Math.round((car.idx - o.car.idx) * STEP);
         // distance along the road, plus the penalty difference when the players' penalties differ
         const pd = (p.pen || 0) - (o.pen || 0);
-        g = `<span class="lbl">GAP</span><span class="${d > 0 ? 'd-good' : d < 0 ? 'd-bad' : 'd-none'}">${d > 0 ? '+' : d < 0 ? '−' : '±'}${Math.abs(d)} m</span>${pd ? ` <span class="${pd > 0 ? 'd-bad' : 'd-good'}">${pd > 0 ? '+' : '−'}${Math.abs(pd).toFixed(1)} s pen</span>` : ''}`;
+        g = `<span class="lbl">GAP</span><span class="${d > 0 ? 'd-good' : d < 0 ? 'd-bad' : 'd-none'}">${d > 0 ? '+' : d < 0 ? '−' : '±'}${Math.abs(d)} m</span>${pd ? ` <span class="${pd > 0 ? 'd-bad' : 'd-good'}">${pd > 0 ? '' : o.name + ' '}+${Math.abs(pd).toFixed(1)} s pen</span>` : ''}`;
       }
     }
     if (g !== u.gapTxt) { u.gap.innerHTML = g; u.gapTxt = g; u.gap.classList.toggle('show', !!g); }

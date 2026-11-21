@@ -778,7 +778,8 @@ export class Car {
       if (hand) decel += K.handDec;
       if (thr < 0.05 && vf > 2) decel += 1.1 + 0.025 * vf; // engine braking
       decel += K.roll + Math.abs(vf) * (0.03 + K.offDrag * off) + off * K.offFlat;
-      if (rr > 0) decel += rr * (K.roughFlat + K.roughDrag * Math.abs(vf) + K.roughQuad * vf * vf);
+      // rough drag; deeper going on slippery surfaces (snow, wet), a little lighter on hardpack
+      if (rr > 0) decel += rr * (K.roughFlat + K.roughDrag * Math.abs(vf) + K.roughQuad * vf * vf) / grip;
       drive -= 9.81 * slope * 0.7;
       const v0 = vf;
       vf += drive * dt;
@@ -981,9 +982,10 @@ export class Car {
     let heave = 0;
     if (this.rough > 0.01) { // rough ground: deterministic bumps shake the body (scaled by speed and the suspension)
       const j = this.rough * Math.min(1, this.speed / 18) * K.roughJolt / 0.5;
-      rT += j * 0.07 * roughBump(this.x, this.z, 2);
-      pT += j * 0.05 * roughBump(this.x, this.z, 3);
-      heave = j * 0.05 * roughBump(this.x, this.z, 4);
+      const bx = this.x * 0.6, bz = this.z * 0.6; // ~4 m body-sized swells
+      rT += j * 0.1 * roughBump(bx, bz, 2);
+      pT += j * 0.07 * roughBump(bx, bz, 3);
+      heave = j * 0.06 * roughBump(bx, bz, 4);
     }
     rT = clamp(rT, -MAX_ROLL, MAX_ROLL); pT = clamp(pT, -MAX_PITCH, MAX_PITCH);
     if (this._land > 0) { this._bobV -= Math.min(this._land, 12) * 0.2 * K.lean; this._land = 0; }

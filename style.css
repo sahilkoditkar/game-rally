@@ -836,3 +836,8 @@ body.duel .hud-rough { bottom: 104px; right: 20px; font-size: 12px; }
 /* results panels hide the HUD timer block behind them */
 .hud-tl { transition: opacity .25s ease; }
 body.results .hud-tl, body.results .hud-rough { opacity: 0; }
+.hud-tl .hud-time { width: max-content; }
+.hud-rough { bottom: calc(158px + var(--safe-b)); }
+body.duel .hud-rough { bottom: 118px; }
+.notice.hint { top: 66%; font-size: 18px; }
+body.duel .notice.hint { font-size: 14px; max-width: 92%; letter-spacing: .04em; }
