@@ -124,16 +124,16 @@ export const STAGES = [
     id: 'cinderreach', name: 'Cinder Reach', tag: 'Volcanic pass · hairpins and kickers', seed: 211,
     layout: ['t3', 'H', 't3', 'J1', 't2', 'J2', 't3', 'H', 't3', 'J1', 't3'],
     twist: 0.9, sharp: 0.22, hills: 11, grip: 1.0, flora: 'volcanic',
-    region: 'peaks', night: false, rain: false, par: null,
+    region: 'peaks', night: false, rain: false, par: 87.5,
     sky: ['#3d6aa8', '#d9d3c6'], fog: '#cdc8bd', fogRange: [80, 360],
-    ground: ['#45403c', '#6a4a37', '#9b7a3c'], rock: '#2b2928', verge: '#706659',
+    ground: ['#45403c', '#6a4a37', '#86693a'], rock: '#2b2928', verge: '#706659',
     road: ['#b8ad9c', '#a79c8d'], dust: '#a39a8e', sun: '#fff1dc', sunPos: [50, 65, -40], ambient: ['#cfd8e6', '#5a4a3c'],
   },
   {
     id: 'sulfurleap', name: 'Sulfur Leap', tag: 'Steam-vent flats · big air', seed: 227,
     layout: ['t2', 'J2', 't2', 'J1', 't2', 'J3', 't2', 'J2', 't2', 'J1', 't2', 'J2', 't2', 'J1', 't2'],
     twist: 0.7, sharp: 0.12, hills: 8, grip: 1.04, flora: 'volcanic',
-    region: 'peaks', night: false, rain: false, par: null,
+    region: 'peaks', night: false, rain: false, par: 76.9,
     sky: ['#8a8f78', '#ddd8b6'], fog: '#d0cbac', fogRange: [45, 260],
     ground: ['#57514a', '#7a5a40', '#b59440'], rock: '#353230', verge: '#7f7564',
     road: ['#c4b9a6', '#b3a895'], dust: '#b8ae98', sun: '#fff6d8', sunPos: [-40, 70, 30], ambient: ['#e2e0c8', '#5e5442'],
@@ -142,9 +142,9 @@ export const STAGES = [
     id: 'kettlecrown', name: 'Kettlecrown Ascent', tag: 'Dusk climb · switchback stack', seed: 239,
     layout: ['t3', 'S4', 't4', 'J3', 't4', 'H', 't3', 'S2d', 't3'],
     twist: 1.0, sharp: 0.25, hills: 12, grip: 0.98, flora: 'volcanic',
-    region: 'peaks', night: false, rain: false, par: null,
+    region: 'peaks', night: false, rain: false, par: 127.5,
     sky: ['#232a58', '#f0915e'], fog: '#a7766a', fogRange: [60, 310],
-    ground: ['#3b3634', '#5f4135', '#8c6c3a'], rock: '#262323', verge: '#5f544b',
+    ground: ['#3b3634', '#5f4135', '#7a5e36'], rock: '#262323', verge: '#5f544b',
     road: ['#ada191', '#9d9183'], dust: '#8f857c', sun: '#ffb27c', sunPos: [-70, 24, 40], ambient: ['#cfaab8', '#3c2e2e'],
   },
 ];
@@ -276,7 +276,7 @@ function buildPeaks(def, R) {
       const single = c === 'H', nh = single ? 1 : num;
       const r = single ? 12.5 + R() : 13.5 + R() * 0.5, dl = single ? 0.12 : 0.1, L = single ? 62 + R() * 12 : 100 + R() * 20;
       const climb = tok.endsWith('d') ? -1 : single ? (R() < 0.5 ? -1 : 1) : 1;
-      const gl = (single ? 0.06 : 0.075) * climb, gh = 0.02 * climb;
+      const gl = (single ? 0.055 : 0.065) * climb, gh = 0.02 * climb;
       let side = h > 0.2 ? 1 : h < -0.2 ? -1 : (R() < 0.5 ? -1 : 1);
       turnTo(side * (Math.PI / 2 - dl), 28, gl * 0.5);
       for (let q = 0; q <= nh; q++) {
@@ -594,8 +594,10 @@ export class Stage {
     return i;
   }
 
-  // feature stages: like height(), but the road height seen from the terrain is blended with any OTHER leg of the
-  // road nearby (soft Voronoi) so stacked switchback legs get continuous embankments instead of a step between them
+  // feature stages: like height(), but between two DIFFERENT legs of the road up to ~50 m apart (e.g. stacked
+  // switchbacks) the ground interpolates linearly from one leg's height to the other's (flat 8 m shoulders, an even embankment between)
+  // instead of each leg flattening its own 10 m and meeting the other in a step. On a leg the result is that leg's
+  // exact road height. "Different leg" = road samples more than 22 samples (44 m) away in index.
   heightMulti(x, z, mesh) {
     const b = this.baseH(x, z);
     const n = this.nearest(x, z);
@@ -604,19 +606,22 @@ export class Stage {
     const f = clamp(n.along / STEP, -1, 1);
     const j1 = clamp(i1 + Math.sign(f), 0, this.n - 1);
     let r = this.sy[i1] + (this.sy[j1] - this.sy[i1]) * Math.abs(f);
-    const { sx, sz } = this, cx = Math.floor(x / 32), cz = Math.floor(z / 32);
-    let eMax = 0, yMax = 0;
-    for (let ix = cx - 1; ix <= cx + 1; ix++) for (let iz = cz - 1; iz <= cz + 1; iz++) {
+    const { sx, sz } = this, cx = Math.floor(x / 32), cz = Math.floor(z / 32), side = n.lat, tx1 = this.tx[i1], tz1 = this.tz[i1];
+    let d2 = 1e9, i2 = -1;
+    for (let ix = cx - 2; ix <= cx + 2; ix++) for (let iz = cz - 2; iz <= cz + 2; iz++) {
       const arr = this.hash.get(ix * 100003 + iz); if (!arr) continue;
       for (let q = 0; q < arr.length; q++) {
-        const i = arr[q], gap = Math.abs(i - i1); if (gap <= 10) continue;
-        const dq = Math.hypot(x - sx[i], z - sz[i]); if (dq > 32) continue;
-        const e = smoothstep(10, 22, gap) * Math.exp(-(dq - d1) / 3);
-        if (e > eMax) { eMax = e; yMax = this.sy[i]; }
+        const i = arr[q]; if (Math.abs(i - i1) <= 22) continue;
+        if (((sx[i] - sx[i1]) * tz1 - (sz[i] - sz[i1]) * tx1) * side <= 0) continue; // only legs on this side
+        const dq = Math.hypot(x - sx[i], z - sz[i]); if (dq < d2) { d2 = dq; i2 = i; }
       }
     }
-    if (eMax > 1e-5) r = (r + eMax * yMax) / (1 + eMax);
     let h = r + (b - r) * smoothstep(10, 30, d1);
+    if (i2 >= 0) {
+      const g = 1 - smoothstep(50, 70, d1 + d2); // two legs up to ~50 m apart: a plain embankment between them
+      const u = clamp((d1 - 8) / Math.max(1, d1 + d2 - 16), 0, 1);
+      h += (r + (this.sy[i2] - r) * u - h) * g;
+    }
     h -= 0.1 * (1 - smoothstep(10, 14, d1));
     if (!mesh && d1 < ROAD_HALF) h += 0.1;
     return h;
@@ -800,9 +805,11 @@ export class Stage {
       const stone = (r, sy, y, x, hex) => { const g = new THREE.IcosahedronGeometry(r, 0); g.scale(1, sy, 1); return part(g, hex, x, y, 0); };
       def('cairn', merge([stone(0.75, 0.45, 0.28, 0, '#ffffff'), stone(0.58, 0.45, 0.72, 0.05, '#e6e6e6'), stone(0.44, 0.5, 1.1, -0.04, '#f4f4f4'),
         stone(0.32, 0.55, 1.42, 0.02, '#dddddd'), stone(0.2, 0.7, 1.68, 0, '#ffffff')]));
+      const puff = (r, y, x, hex) => { const g = new THREE.IcosahedronGeometry(r, 2); g.scale(1, 0.85, 1); return part(g, hex, x, y, 0); };
       // steam vent: ochre sulphur rim around a dark throat, a column of white steam puffs (baked colours)
       def('vent', merge([part(new THREE.CylinderGeometry(1.0, 1.5, 0.5, 7), '#c9a640', 0, 0.25, 0), part(new THREE.CylinderGeometry(0.55, 0.7, 0.52, 7), '#2a2522', 0, 0.28, 0),
-        stone(0.7, 0.8, 1.2, 0.1, '#f2f2ee'), stone(0.95, 0.75, 2.2, -0.25, '#eaeae6'), stone(1.15, 0.7, 3.4, 0.2, '#f5f5f2'), stone(0.9, 0.6, 4.5, 0.55, '#fafafa')]), false);
+        puff(0.5, 0.9, 0.05, '#e4e7e2'), puff(0.75, 1.8, -0.15, '#eef0ec'), puff(0.6, 2.5, 0.55, '#f2f4f0'), puff(1.05, 3.3, 0.6, '#f7f8f5'),
+        puff(0.8, 4.3, 1.4, '#fbfcfa'), puff(1.25, 5.0, 1.9, '#ffffff'), puff(0.7, 6.1, 2.8, '#ffffff')]), false);
     }
     if (flora === 'coast') {
       // umbrella pine: tall leaning bare trunk (tinted bark) + flat layered canopy (tinted green)
@@ -976,7 +983,7 @@ export class Stage {
     }
 
     for (const name in T) {
-      const t = T[name], mat = flatMat();
+      const t = T[name], mat = name === 'vent' ? new THREE.MeshLambertMaterial({ vertexColors: true }) : flatMat(); // soft steam
       for (const it of t.items.values()) {
         const m = new THREE.InstancedMesh(t.geo, mat, it.m.length);
         it.m.forEach((mx, k) => m.setMatrixAt(k, mx));
@@ -1092,6 +1099,20 @@ export class Stage {
     pm.castShadow = true; fm.castShadow = true; pm.userData.gate = fm.userData.gate = true;
     pm.computeBoundingSphere(); fm.computeBoundingSphere();
     this.group.add(pm, fm);
+    // feature stages: a yellow/black chevron board either side of every jump lip (no colliders, no RNG)
+    if (this.jumps.length) {
+      const sign = merge([part(new THREE.BoxGeometry(0.1, 1.3, 0.1), '#d8d4cc', 0, 0.65, 0), part(new THREE.BoxGeometry(0.9, 0.6, 0.06), '#ffc61a', 0, 1.3, 0),
+        part(new THREE.BoxGeometry(0.22, 0.42, 0.07).rotateZ(0.6), '#1d1d1f', -0.16, 1.3, 0), part(new THREE.BoxGeometry(0.22, 0.42, 0.07).rotateZ(0.6), '#1d1d1f', 0.2, 1.3, 0)]);
+      const sm = new THREE.InstancedMesh(sign, mat, this.jumps.length * 2);
+      let q = 0;
+      for (const jp of this.jumps) for (const side of [-1, 1]) {
+        const i = jp.idx, off = (ROAD_HALF + 1.3) * side, x = this.sx[i] + this.tz[i] * off, z = this.sz[i] - this.tx[i] * off;
+        o.position.set(x, this.height(x, z, true) - 0.05, z); o.rotation.set(0, Math.atan2(this.tx[i], this.tz[i]) + Math.PI, 0); o.scale.set(1, 1, 1); o.updateMatrix();
+        sm.setMatrixAt(q, o.matrix); sm.setColorAt(q++, col.set('#ffffff'));
+      }
+      sm.castShadow = true; sm.userData.gate = true; sm.computeBoundingSphere();
+      this.group.add(sm);
+    }
     this.clearGateOpenings();
   }
 
