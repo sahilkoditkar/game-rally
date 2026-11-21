@@ -219,8 +219,9 @@ function setScreen() {
   $('touch').classList.toggle('hidden', !(isTouch && !duel && (state === 'countdown' || state === 'race') && !paused));
   const ov = setOpen ? 'settings' : paused ? 'pause' : showResults ? (rally ? 'rally' : duel ? 'duelFinish' : 'finish') : null;
   if (ov !== overlayId) {
+    const back = overlayId === 'settings' && ov === 'pause'; // closing Settings returns focus to Pause › Settings
     overlayId = ov; overlayAt = performance.now();
-    if (ov && ov !== 'settings') defaultFocus($(ov));
+    if (ov && ov !== 'settings' && !back) defaultFocus($(ov));
   }
   players[1].car.group.visible = duel && racing;
   for (const p of players) {
@@ -916,6 +917,7 @@ window.__game = {
   closeSettings: () => closeSettings(),
   get settings() { return { ...settingsState(), sound: !muted, ghost: ghostOn }; },
   get screen() { return screenName(); },
+  padPress: (k, b) => onPadEdge(k, b), // drive the gamepad edge handler (tests)
   get muted() { return muted; },
   setMode,
   get time() { return players[0].time; },

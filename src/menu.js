@@ -110,6 +110,7 @@ export function renderMenu(ctx) {
   const [verb, what] = startLabel(pick, duel);
   $('startBtn').innerHTML = `<span class="st-verb">${esc(verb)}</span>${what ? `<span class="st-what">· ${esc(what)}</span>` : ''}<span class="btn-key">Enter</span>`;
   $('startBtn').setAttribute('aria-label', `${verb} ${what}`);
+  $('startBtn').classList.toggle('long', verb.includes(' ')); // 'Start duel', 'Start rally': a smaller verb so the name fits
 
   if (garage) { renderGarage(ctx.garage); return; }
 
