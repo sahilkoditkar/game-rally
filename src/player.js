@@ -9,7 +9,8 @@ import { Headlights } from './fx.js';
 export const CAMS = [
   { name: 'CHASE', dist: 13, h: 7.5, look: 6 },
   { name: 'HIGH', dist: 22, h: 15, look: 8 },
-  { name: 'TOP', dist: 4.5, h: 27, look: 3 },
+  // low, close action cam: aims well down the road, wider and a little wider still with speed, leans into slides
+  { name: 'ACTION', dist: 6.5, h: 2.4, look: 13.5, action: true, fov: 8, fovSpeed: 5, pullBack: 0.28 },
 ];
 // every player drives the Rook; a player's look/performance is a build (see carapi.js / economy.js)
 export class Player {
@@ -89,19 +90,33 @@ export function updateCamera(p, dt, stage, orbitMode) {
     _l.set(car.x, car.y + (garage ? 0.7 : 0.8), car.z);
     p.camYaw = car.yaw;
   } else {
-    const c = CAMS[p.camMode], sp = phys.speed;
+    const c = CAMS[p.camMode] || CAMS[0], sp = phys.speed;
     let fx = Math.sin(car.yaw), fz = Math.cos(car.yaw);
     if (sp > 3) {
-      const w = 0.6 * smoothstep(3, 10, sp);
+      // follow the velocity direction only when rolling forwards (reversing would swing the camera round)
+      const w = 0.6 * smoothstep(3, 10, sp) * smoothstep(0, 3, phys.vf ?? sp);
       fx = fx * (1 - w) + (phys.vx / sp) * w; fz = fz * (1 - w) + (phys.vz / sp) * w;
     }
     const target = Math.atan2(fx, fz);
     p.camYaw = p.camSnap ? target : p.camYaw + angDiff(target, p.camYaw) * damp(3.2, dt);
-    const sk = clamp(sp / 40, 0, 1), cs = p.camScale || 1, dist = c.dist * cs * (1 + sk * 0.2), h = c.h * cs * (1 + sk * 0.06);
+    const sk = clamp(sp / 40, 0, 1), cs = p.camScale || 1, h = c.h * cs * (1 + sk * 0.06);
+    // reversing towards a close camera: back off with reverse speed so the smoothing lag can't crop the car
+    const dist = c.dist * cs * (1 + sk * (c.pullBack ?? 0.2)) + (c.action ? Math.max(0, -(phys.vf ?? 0)) * 0.35 : 0);
     const sx = Math.sin(p.camYaw), sz = Math.cos(p.camYaw);
-    _v.set(car.x - sx * dist, car.y + h, car.z - sz * dist);
-    _l.set(car.x + sx * c.look, car.y + 0.8, car.z + sz * c.look);
+    // the low cam follows a smoothed copy of the car's rendered height, so crests and jumps don't pogo it
+    if (p.camSnap || p.camCarY == null) p.camCarY = car.y;
+    else p.camCarY += (car.y - p.camCarY) * damp(c.action ? 4 : 30, dt);
+    const cy = c.action ? p.camCarY : car.y;
+    _v.set(car.x - sx * dist, cy + h, car.z - sz * dist);
+    _l.set(car.x + sx * c.look, cy + 0.8, car.z + sz * c.look);
   }
+  // per-preset field of view on top of the pane's base (set in layout), eased; the action cam widens with speed
+  const preset = !orbitMode ? CAMS[p.camMode] || CAMS[0] : null;
+  const baseFov = cam.userData.baseFov || cam.fov;
+  const fovT = baseFov + (preset ? (preset.fov || 0) + (preset.fovSpeed || 0) * clamp(phys.speed / 40, 0, 1) : 0);
+  if (cam.userData.baseFov == null) cam.userData.baseFov = cam.fov;
+  const fov = p.camSnap ? fovT : cam.fov + (fovT - cam.fov) * damp(4, dt);
+  if (Math.abs(fov - cam.fov) > 1e-3) { cam.fov = fov; cam.updateProjectionMatrix(); }
   if (p.camSnap) { p.camPos.copy(_v); p.camLook.copy(_l); p.camSnap = false; }
   else { p.camPos.lerp(_v, damp(orbitMode ? 2 : 6, dt)); p.camLook.lerp(_l, damp(orbitMode ? 4 : 10, dt)); }
   const gy = stage.height(p.camPos.x, p.camPos.z) + 1.6;
@@ -113,6 +128,10 @@ export function updateCamera(p, dt, stage, orbitMode) {
     p.shake *= Math.exp(-6 * dt);
   }
   cam.lookAt(p.camLook);
+  // action cam: lean gently into the turn / slide (roll from the yaw rate), smoothed
+  const leanT = preset && preset.action ? clamp(-(phys.yawRate || 0) * 0.045, -0.07, 0.07) : 0;
+  p.camLean = (p.camLean || 0) + (leanT - (p.camLean || 0)) * damp(5, dt);
+  if (Math.abs(p.camLean) > 1e-4) cam.rotateZ(p.camLean);
 }
 
 // shadow frustum follows the car of the pane being rendered, centred a little ahead in view direction

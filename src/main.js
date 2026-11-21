@@ -247,7 +247,7 @@ function layout() {
     const v = p.view, c = p.cam, s = p.ui.el.style;
     s.left = v.x + 'px'; s.top = v.y + 'px'; s.width = v.w + 'px'; s.height = v.h + 'px';
     c.aspect = v.w / v.h;
-    c.fov = c.aspect < 0.8 ? 62 : c.aspect < 1.1 ? 56 : 50;
+    c.fov = c.userData.baseFov = c.aspect < 0.8 ? 62 : c.aspect < 1.1 ? 56 : 50; // camera presets add to this base
     // solo menu / results: nudge the car out from under the panel (right on wide screens, up on portrait)
     const side = !duel && (state === 'menu' || (state === 'finish' && finishT > 1.1));
     if (side && W > 720) c.setViewOffset(W, H, -Math.min(W * 0.2, 300), 0, W, H);
