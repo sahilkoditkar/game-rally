@@ -17,7 +17,7 @@ export const MEDAL = Object.fromEntries(MEDALS.map((m) => [m.id, m]));
 const RANK = { ace: 4, gold: 3, silver: 2, bronze: 1 };
 export const medalRank = (id) => RANK[id] || 0;
 
-// the 12 regular stages count towards points; the daily stage shows a medal but does not count
+// every region's stages count towards points (15 stages, 60 points max); the daily stage shows a medal but does not count
 const REGULAR = REGIONS.flatMap((r) => r.stages);
 export const MAX_POINTS = REGULAR.length * MEDALS[0].points;
 
