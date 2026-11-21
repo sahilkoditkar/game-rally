@@ -15,6 +15,7 @@ import { profile, offer, buy as buyItem, earn, countRun, setBuild as setProfileB
 import { renderGarage, garageKey, garagePreview, clearPreview, setGarageTab, garageTab, garageCar, setGarageCar } from './garage.js';
 import { setStockLights } from './fx.js';
 import { Rules, GateMarker, roughOf, penaltyHtml } from './rules.js';
+import { buildNotes, notesAhead, renderNotes, clearNotes } from './notes.js';
 import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults, renderRallyStage, renderRallyResults, earningsBlock } from './hud.js';
 import { renderMenu, playTabs, tabEntries, startLabel } from './menu.js';
 import { openSettings as openSettingsPanel, closeSettings, settingsOpen, settingsKey, settingsState, renderSettings } from './settings.js';
@@ -347,6 +348,7 @@ function startStage(key) {
       p.resetRun();
       p.place(stage, stage.startIdx, racers.length === 2 ? (k === 0 ? 1.6 : -1.6) : 0); // P1 on the left, P2 on the right
       p.rules = new Rules(stage); p.pen = 0; p.penFlashT = 0; p.roughOn = false;
+      p.noteNow = null; clearNotes(p.ui.notes);
       p.marker.setGate(p.rules.nextGate, stage); p.marker.active = true;
     });
     preparePanes(racers, stage, cond, { targets: racers.length === 1 ? medalTimes(def) : null });
@@ -530,13 +532,28 @@ function rallyContinue() {
   startStage(rally.ids[rally.idx]);
 }
 
+// ---------------------------------------------------------------- pace notes (corner calls per pane; never in the menu)
+const NOTES_KEY = 'dustline.notes.on';
+let notesOn = store.get(NOTES_KEY, true) !== false;
+function updateNotes() {
+  const notes = stage ? buildNotes(stage) : [];
+  racers.forEach((p) => {
+    const live = notesOn && (state === 'countdown' || state === 'race') && !p.done;
+    const shown = live ? notesAhead(p._fakeNotes || notes, p.car.idx | 0, p.car.speed) : null;
+    p.noteNow = shown && shown.list.length ? shown.list[0] : null;
+    const fresh = renderNotes(p.ui.notes, shown);
+    // a soft tick on each new call (not during the countdown, not when muted)
+    if (fresh.length && state === 'race' && !muted && !paused) soundOf(p).beep(1250, 0.03);
+  });
+}
+
 // ---------------------------------------------------------------- settings overlay
 const settingsCtx = (from) => ({
   from,
-  muted: () => muted, ghostOn: () => ghostOn,
+  muted: () => muted, ghostOn: () => ghostOn, notesOn: () => notesOn,
   // Touch on touch-only devices, Gamepad when a pad is connected, otherwise Keyboard
   defaultCtl: () => (isTouch && !hasFinePointer ? 'touch' : connectedPads().length ? 'gamepad' : 'keyboard'),
-  onMute: () => toggleMute(), onGhost: () => toggleGhost(),
+  onMute: () => toggleMute(), onGhost: () => toggleGhost(), onNotes: () => { notesOn = !notesOn; store.set(NOTES_KEY, notesOn); },
   volume: (k) => getVolume(k),
   onVolume: (k, v, final) => { setVol(k, v); if (final && k === 'sfx') modeSounds()[0].beep(660, 0.09); }, // a soft preview blip
   onClose: () => setScreen(), // from Pause, closing shows the pause panel again (still paused)
@@ -868,6 +885,7 @@ function frame(now) {
     }
   }
   if (state !== 'menu' && state !== 'boot') {
+    updateNotes();
     updatePanes(racers, stage, state, rally ? { n: rally.idx + 1, of: rally.ids.length, totals: rally.base } : null, // base = totals before this stage, so the HUD never double counts
       ghost && ghostOn && state === 'race' ? ghostDelta : undefined);
     if (state === 'race' && !paused) hintsT += dt;
@@ -907,6 +925,11 @@ window.__game = {
   medals: () => medalSummary(),
   get ghost() { return ghost ? { time: ghost.time, build: ghost.rec.build || null, carId: ghost.rec.carId || null, active: ghostOn && ghost.car.group.visible, delta: ghostDelta, t: ghostT, v: ghost.rec.v, pens: ghost.rec.pens || [], pos: ghost.car.group.position.toArray() } : null; },
   get ghostOn() { return ghostOn; },
+  get notes() { return stage ? buildNotes(stage) : []; },
+  get noteNow() { return racers.map((p) => (p.noteNow ? { ...p.noteNow } : null)); },
+  get notesOn() { return notesOn; },
+  // tests: replace a player's note list (to render hairpin / jump calls on today's roads); null restores
+  setFakeNotes(k, list) { const p = players[k]; if (p) { p._fakeNotes = list || null; clearNotes(p.ui.notes); } },
   get penalties() { return racers.map((p) => (p.rules ? p.rules.summary() : null)); },
   get gates() { return stage ? (racers[0].rules ? racers[0].rules.gates.map((g) => ({ ...g })) : null) : null; },
   get profile() { return JSON.parse(JSON.stringify(profile)); },
