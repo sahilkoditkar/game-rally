@@ -598,7 +598,7 @@ body.touch .btn-key, body.touch .kbd-only, body.touch .set-k { display: none; }
 }
 .menu-foot::before { content: ""; position: absolute; left: -36px; right: -32px; top: -18px; height: 18px; pointer-events: none; background: linear-gradient(180deg, rgba(241,235,220,0), #f1ebdc); }
 .menu-foot::after { content: ""; position: absolute; left: -36px; right: -32px; top: 0; bottom: 0; z-index: -1; background: #f1ebdc; }
-.start-btn { width: 100%; justify-content: flex-start; gap: 8px; padding: 0 14px 0 18px; min-width: 0; }
+.btn.start-btn { width: 100%; justify-content: flex-start; gap: 8px; padding: 0 12px 0 16px; min-width: 0; }
 .start-btn .st-verb { font-size: 25px; }
 .st-verb { flex: none; }
 .st-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 800; letter-spacing: .02em; }
@@ -792,7 +792,10 @@ body.touch .hud-bl { display: none; }
 
   /* HUD */
   .hud-tl { left: calc(var(--gut) + var(--safe-l)); top: calc(62px + var(--safe-t)); max-width: calc(100% - 2 * var(--gut)); }
-  body.touch .hud-tl { max-width: calc(100% - 3 * var(--gut) - 150px); }
+  body.touch .hud-tl { max-width: calc(100% - 3 * var(--gut) - 172px); }
+  .hud-stage { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body.touch .hud-br { padding: 3px 10px 6px 12px; }
+  body.touch .rpm { width: 80px; }
   .hud-time { font-size: 32px; }
   .hud-stage { font-size: 11px; }
   .hud-split { font-size: 16px; }

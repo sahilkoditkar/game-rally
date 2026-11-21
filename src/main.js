@@ -18,7 +18,7 @@ import { Rules, GateMarker, roughOf, penaltyHtml } from './rules.js';
 import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults, renderRallyStage, renderRallyResults, earningsBlock } from './hud.js';
 import { renderMenu, playTabs, tabEntries, startLabel } from './menu.js';
 import { openSettings as openSettingsPanel, closeSettings, settingsOpen, settingsKey, settingsState, renderSettings } from './settings.js';
-import { navBtns, defaultFocus, moveFocus, activateFocus } from './nav.js';
+import { defaultFocus, moveFocus, activateFocus } from './nav.js';
 import { medalPoints, medalTimes, medalFor, medalRank, medalUp, rallyStages, rallyPar, parOf, trophyFor, getRallyBest, setRallyBest, medalSummary } from './progress.js';
 import { GhostRecorder, GhostPlayer, loadGhost, saveGhost, pruneDailyGhosts, GHOST_ON_KEY } from './ghost.js';
 import { pose } from './player.js';
@@ -367,7 +367,7 @@ function toMenu() {
   sel = pickStage();
   const def = getDef(sel);
   clearPreview();
-  const enter = () => { loadStage(def); players[0].setBuild(profile.build); players[0].lights.setEnabled(cond.night); players[0].place(stage, menuIdx()); dust.clear(); };
+  const enter = () => { loadStage(def); showroom(); players[0].lights.setEnabled(cond.night); players[0].place(stage, menuIdx()); dust.clear(); };
   if (built.has(def.id)) enter(); else withLoading(def, () => { if (state === 'menu') enter(); });
   showMenu(true);
   setScreen();
