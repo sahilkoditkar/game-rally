@@ -9,30 +9,41 @@ import { $, params } from './util.js';
 import { store, getBest, setBest } from './storage.js';
 import { REGIONS, menuIds, getDef, regionOf, nextId, isDaily, dailyDef, conditions, lengthOf } from './catalog.js';
 import { Dust, Rain } from './fx.js';
-import { Player, CAMS, updateCamera, aimSun } from './player.js';
+import { Player, CAMS, updateCamera, aimSun, PORTRAIT_HFOV, PORTRAIT_VFOV_MAX } from './player.js';
 import { PAINTS, ACCENTS, DEFAULT_BUILD, normalizeBuild, buildStats } from './carapi.js';
 import { profile, offer, buy as buyItem, earn, countRun, setBuild as setProfileBuild, stageEarnings, rallyEarnings, anythingAffordable, ownsPaint, ownsAccent, EARN, costs } from './economy.js';
 import { renderGarage, garageKey, garagePreview, clearPreview, setGarageTab, garageTab, garageCar, setGarageCar } from './garage.js';
 import { setStockLights } from './fx.js';
 import { Rules, GateMarker, roughOf, penaltyHtml } from './rules.js';
 import { buildNotes, notesAhead, renderNotes, clearNotes } from './notes.js';
-import { showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults, renderRallyStage, renderRallyResults, earningsBlock } from './hud.js';
+import { fmtShort, showNotice, preparePanes, updatePanes, flashSplit, paneFinished, renderFinish, renderDuelResults, renderRallyStage, renderRallyResults, earningsBlock } from './hud.js';
 import { renderMenu, playTabs, tabEntries, startLabel } from './menu.js';
 import { openSettings as openSettingsPanel, closeSettings, settingsOpen, settingsKey, settingsState, renderSettings } from './settings.js';
 import { defaultFocus, moveFocus, activateFocus } from './nav.js';
 import { medalPoints, medalTimes, medalFor, medalRank, medalUp, rallyStages, rallyPar, parOf, trophyFor, getRallyBest, setRallyBest, medalSummary } from './progress.js';
 import { GhostRecorder, GhostPlayer, loadGhost, saveGhost, pruneDailyGhosts, GHOST_ON_KEY } from './ghost.js';
 import { pose } from './player.js';
-import { keys, HOLD, readInput, pollPads, connectedPads, bindKeyboard, bindTouch } from './input.js';
+import { keys, HOLD, readInput, pollPads, connectedPads, bindKeyboard, bindTouch, releaseTouch } from './input.js';
+import { QualityScaler, LEVELS, NAMED, HIGH } from './quality.js';
+import { autoGas, AUTOGAS_KEY, ASSIST } from './assist.js';
+import { Tutorial } from './tutorial.js';
+import { MEDAL } from './progress.js';
 import { platform } from './platform/index.js';
-import { naturalBreak, breakActive, forcedMute, onForcedMute, noteRunEnd } from './adbreak.js';
+import { naturalBreak, breakActive, afterBreak, forcedMute, onForcedMute, noteRunEnd } from './adbreak.js';
 
 const FIXED = 1 / 120;
 const SUN_BASE = 2.5, HEMI_BASE = 1.7;
 
 // ---------------------------------------------------------------- renderer / scene
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+// quality: ?quality=low|med|high pins a level; otherwise (auto) touch devices start at a conservative level and the
+// scaler steps down when frames run long and back up when there is headroom (src/quality.js)
+const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+const hasFinePointer = window.matchMedia && window.matchMedia('(any-pointer: fine)').matches;
+const qParam = (params.get('quality') || 'auto').toLowerCase();
+const quality = new QualityScaler(qParam in NAMED ? NAMED[qParam] : isTouch ? NAMED.med : HIGH, qParam in NAMED);
+const qLevel = () => LEVELS[quality.level];
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qLevel().pr));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
@@ -43,7 +54,8 @@ const scene = new THREE.Scene();
 const hemi = new THREE.HemisphereLight(0xffffff, 0x888888, HEMI_BASE);
 const sun = new THREE.DirectionalLight(0xffffff, SUN_BASE);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(qLevel().shadow || 2048, qLevel().shadow || 2048);
+sun.castShadow = qLevel().shadow > 0;
 Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 320 });
 sun.shadow.camera.updateProjectionMatrix();
 sun.shadow.bias = -0.0005;
@@ -85,9 +97,11 @@ soundFor('c', { pan: 0, gain: 1 });
 onForcedMute(() => { for (const s of allSounds()) s.setMuted(muted || forcedMute()); }); // ad breaks / portal mute; the player's own setting comes back after
 
 // ---------------------------------------------------------------- players & state
-const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-const hasFinePointer = window.matchMedia && window.matchMedia('(any-pointer: fine)').matches;
 if (isTouch) document.body.classList.add('touch');
+// Auto accelerate (assist.js): on by default on touch-only devices, saved as dustline.autogas
+let autogas = (() => { const v = store.get(AUTOGAS_KEY, null); return typeof v === 'boolean' ? v : isTouch && !hasFinePointer; })();
+function setAutogas(on) { autogas = !!on; store.set(AUTOGAS_KEY, autogas); document.body.classList.toggle('autogas', autogas); }
+document.body.classList.toggle('autogas', autogas);
 setStockLights(buildStats(DEFAULT_BUILD).lights); // headlights of a stock build look exactly as before upgrades
 const players = [new Player(0, scene, $('panes')), new Player(1, scene, $('panes'))];
 for (const p of players) { p.marker = new GateMarker(scene); p.rules = null; p.pen = 0; }
@@ -152,6 +166,32 @@ function spawnGhost(def) {
   try { ghost = new GhostPlayer(rec, scene); } catch (e) { ghost = null; }
 }
 
+// first-run guide (tutorial.js): the PLAY-only menu on the very first launch, coach marks in the first race(s)
+const tut = new Tutorial(profile.stats.runs);
+const touchOnly = isTouch && !hasFinePointer;
+function controlsTip() {
+  if (!touchOnly && connectedPads().length) return autogas ? 'Left stick steers · the car accelerates by itself · LT brakes' : 'RT gas · left stick steers · LT brake · A handbrake';
+  if (touchOnly) return autogas ? 'Steer with ◀ ▶ — the car accelerates by itself' : 'Hold GAS to go · steer with ◀ ▶';
+  return autogas ? '<kbd>←</kbd><kbd>→</kbd> steer · the car accelerates by itself · <kbd>↓</kbd> brake'
+    : '<kbd>↑</kbd> gas · <kbd>←</kbd><kbd>→</kbd> steer · <kbd>↓</kbd> brake · <kbd>Space</kbd> handbrake';
+}
+const GATES_TIP = 'Stay between the flags — a missed gate costs 5 s';
+const gatesTip = (p) => ({ onShow: () => { p.marker.emphasise(4.4); store.set('dustline.hint.gates', true); } });
+// per frame while a guided race runs (never while paused): each tip at its moment, one at a time
+function updateTutorial(dt) {
+  if (!tut.run || racers.length !== 1) return;
+  const p = racers[0];
+  if (state === 'countdown' && cdT >= 0) tut.want('goal', 'Race to the finish — beat the clock', { dur: 3.7, hold: true, cls: 'big' });
+  if (state === 'race' && !p.done) {
+    if (p.time > 0.5) tut.want('controls', controlsTip(), { dur: 4.6, cls: 'at-controls', onShow: () => $('touch').classList.add('hint'), onHide: () => $('touch').classList.remove('hint') });
+    const g = p.rules && p.rules.nextGate;
+    if (g && tut.has('controls') && (g.idx - p.car.idx) * 2 < 95) tut.want('gates', GATES_TIP, gatesTip(p));
+    if (notesOn && p.noteNow && p.noteNow.kind === 'corner' && tut.has('controls')) tut.want('notes', 'Arrows call the next corner — lower number = tighter', { cls: 'at-notes' });
+  }
+  tut.update(dt);
+}
+$('coachSkip').addEventListener('click', () => { tut.skip(); $('touch').classList.remove('hint'); if (state === 'menu') showMenu(); });
+
 // split-screen needs two sets of controls: a keyboard, or two gamepads
 const duelAvailable = () => !isTouch || hasFinePointer || connectedPads().length >= 2;
 
@@ -174,6 +214,19 @@ function loadStage(def) {
   applyConditions(stage.def);
 }
 
+let fogBase = [70, 330];
+// apply the quality level: pixel ratio (via layout), shadow map size or no shadows, draw distance, dust
+function applyQuality() {
+  const L = qLevel();
+  if (L.shadow > 0) {
+    if (sun.shadow.mapSize.x !== L.shadow) { sun.shadow.mapSize.set(L.shadow, L.shadow); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+    sun.castShadow = true;
+  } else sun.castShadow = false;
+  dust.rate = L.dust;
+  if (scene.fog) { scene.fog.near = fogBase[0] * L.draw; scene.fog.far = fogBase[1] * L.draw; }
+  for (const p of players) { p.cam.far = 420 * L.draw; p.cam.updateProjectionMatrix(); }
+  layout();
+}
 const RAIN_TINT = new THREE.Color('#9fb2c8'), NIGHT_TINT = new THREE.Color('#1d2740');
 function applyConditions(d) {
   cond = conditions(d);
@@ -183,7 +236,8 @@ function applyConditions(d) {
   if (scene.background) scene.background.dispose();
   scene.background = skyTexture(col(d.sky[0]), col(d.sky[1]));
   const fogNear = d.fogRange[0] * (cond.rain ? 0.7 : 1), fogFar = d.fogRange[1] * (cond.rain ? 0.75 : 1);
-  scene.fog = new THREE.Fog(col(d.fog), fogNear, fogFar);
+  fogBase = [fogNear, fogFar];
+  scene.fog = new THREE.Fog(col(d.fog), fogNear * qLevel().draw, fogFar * qLevel().draw);
   hemi.color.set(d.ambient[0]); hemi.groundColor.set(d.ambient[1]);
   sun.color.set(d.sun);
   if (cond.rain) { sun.color.lerp(RAIN_TINT, 0.4); hemi.color.lerp(RAIN_TINT, 0.3); }
@@ -198,7 +252,7 @@ function applyConditions(d) {
 
 // build a stage behind a small loading veil (yield a frame first so the veil paints)
 function withLoading(def, fn) {
-  if (built.has(def.id)) { fn(); return; }
+  if (built.has(def.id) || afterBreak()) { if (!built.has(def.id)) loadStage(def); fn(); return; } // straight after an ad break: the veil still covers the screen
   const l = $('loading');
   l.classList.remove('fade'); if (state !== 'boot') l.classList.add('soft');
   requestAnimationFrame(() => setTimeout(() => { try { fn(); } finally { l.classList.add('fade'); } }, 30));
@@ -215,6 +269,7 @@ function setScreen() {
   const setOpen = settingsOpen();
   document.body.classList.toggle('duel', duel && racing);
   document.body.classList.toggle('results', showResults); // the results panels hide the HUD behind them
+  document.body.classList.toggle('paused', paused || setOpen);
   $('menu').classList.toggle('hidden', state !== 'menu');
   $('hud').classList.toggle('hidden', !racing);
   $('settings').classList.toggle('hidden', !setOpen);
@@ -243,7 +298,7 @@ function setScreen() {
 // viewports: one full-screen pane, or two side by side (landscape) / stacked (portrait)
 function layout() {
   const W = window.innerWidth, H = window.innerHeight, duel = racers.length === 2;
-  const pr = Math.min(window.devicePixelRatio || 1, duel ? 1.5 : 2);
+  const pr = Math.min(window.devicePixelRatio || 1, qLevel().pr, duel ? 1.5 : 2);
   if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
   renderer.setSize(W, H);
   const land = W >= H;
@@ -257,9 +312,14 @@ function layout() {
     s.left = v.x + 'px'; s.top = v.y + 'px'; s.width = v.w + 'px'; s.height = v.h + 'px';
     c.aspect = v.w / v.h;
     c.fov = c.userData.baseFov = c.aspect < 0.8 ? 62 : c.aspect < 1.1 ? 56 : 50; // camera presets add to this base
-    // solo menu / results: nudge the car out from under the panel (right on wide screens, up on portrait)
+    // tall, narrow panes (phones upright): the chase cams use their portrait numbers and a vertical field of view
+    // wide enough for PORTRAIT_HFOV degrees across (the menu / garage / finish orbits keep the base above)
+    p.portrait = c.aspect < 0.8;
+    c.userData.portraitFov = Math.min(PORTRAIT_VFOV_MAX, 2 * Math.atan(Math.tan((PORTRAIT_HFOV * Math.PI) / 360) / c.aspect) * 180 / Math.PI);
+    if (p.portrait && !p.done && (state === 'countdown' || state === 'race')) c.fov = c.userData.portraitFov;
+    // solo menu / results: nudge the car out from under the panel (right on wide screens and landscape phones, up on portrait)
     const side = !duel && (state === 'menu' || (state === 'finish' && finishT > 1.1));
-    if (side && W > 720) c.setViewOffset(W, H, -Math.min(W * 0.2, 300), 0, W, H);
+    if (side && (W > 720 || (W > H && H <= 500))) c.setViewOffset(W, H, -Math.min(W * 0.2, 300), 0, W, H);
     // phone: the menu is a bottom sheet, so lift the car into the top band (about 22 % down the screen)
     else if (!duel && state === 'menu') c.setViewOffset(W, H, 0, H * MENU_LIFT, W, H);
     else c.clearViewOffset();
@@ -268,12 +328,15 @@ function layout() {
 }
 const MENU_LIFT = 0.3;
 window.addEventListener('resize', layout);
+// phones: the address bar / keyboard change the visible area without always firing a window resize
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { if (window.innerWidth !== renderer.domElement.clientWidth || window.innerHeight !== renderer.domElement.clientHeight) layout(); });
+window.addEventListener('orientationchange', () => setTimeout(layout, 120));
 
 function showMenu(scroll = false) {
   players[1].setBuild(p2Build()); // P2's look (P1's build, P2's paint/accent)
   renderMenu({
     pick, mode, duelAvailable: duelAvailable(), scroll,
-    view: menuView, garage: garageCtx(),
+    view: menuView, garage: garageCtx(), firstRun: tut.heroNow,
     onPick: (tab, entry) => setPick(tab, entry), onStart: () => startPick(),
     onP2: () => openP2Colours(),
   });
@@ -360,6 +423,9 @@ function startStage(key) {
     dust.clear();
     state = 'countdown'; paused = false;
     cdT = -0.5; cdShown = null; finishT = 0; hintsT = 0;
+    tut.begin(racers.length === 1 && !auto);
+    if (tut.run && !notesOn) tut.mark('notes'); // pace notes are off: nothing to point at
+    $('touch').classList.remove('hint'); releaseTouch(); quality.reset();
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     setScreen();
   });
@@ -367,6 +433,7 @@ function startStage(key) {
 
 function toMenu() {
   paused = false;
+  tut.end(); $('touch').classList.remove('hint');
   if (settingsOpen()) closeSettings();
   for (const p of players) { p.rules = null; p.marker.active = false; p.marker.show(false); }
   rally = null;
@@ -390,6 +457,7 @@ function setPaused(p, hidden = false) {
   if (!p && settingsOpen()) closeSettings();
   paused = p;
   if (p && !hidden) platform.gameplayStop(); else if (!p && state === 'race') platform.gameplayStart();
+  releaseTouch(); quality.reset();
   if (p) {
     $('pauseKicker').textContent = rally ? `Paused \u00b7 Rally ${rally.idx + 1}/${rally.ids.length}` : 'Paused';
     $('pauseStage').textContent = stage.def.daily ? 'Today\u2019s stage' : stage.def.name;
@@ -423,7 +491,9 @@ function gateEvents(p, ev) {
     else {
       p.marker.flash(e.gate, stage, false);
       penalize(p, e.pen, `MISSED GATE +${e.pen.toFixed(1)}`);
-      if (!store.get('dustline.hint.gates', false)) { store.set('dustline.hint.gates', true); showNotice(p, 'Stay between the flags \u2014 missed gates cost 5 s', 4.5, 'hint'); }
+      // first-run guide: the gates tip comes now if it has not been shown yet (instead of the old one-off hint)
+      if (tut.run && racers.length === 1 && !tut.has('gates')) tut.want('gates', GATES_TIP, gatesTip(p));
+      else if (!store.get('dustline.hint.gates', false)) { store.set('dustline.hint.gates', true); showNotice(p, 'Stay between the flags \u2014 missed gates cost 5 s', 4.5, 'hint'); }
     }
   }
   if (ev.length) p.marker.setGate(p.rules.nextGate, stage);
@@ -468,19 +538,41 @@ function playerFinish(p) {
       if (rec) lastRun.ghostSaved = saveGhost(id, rec) > 0;
     }
     renderFinish(stage.def, lastRun, nextName);
-    const hint = firstEver ? 'Spend credits in the' : anythingAffordable() ? 'Something new is affordable \u2014' : '';
+    // first-run guide: one line on what the medal means and what credits are for, and NEXT is the obvious button
+    const firstTip = tut.run && !tut.has('finish') && !rally;
+    finishTip(firstTip ? { medal, times: medalTimes(stage.def), next: !!nextName } : null);
+    if (firstTip) tut.mark('finish');
+    tut.endHero(); // the full menu from now on
+    const hint = firstTip ? '' : firstEver ? 'Spend credits in the' : anythingAffordable() ? 'Something new is affordable \u2014' : '';
     lastRun.hint = hint;
     $('finEarn').innerHTML = earningsBlock(e, profile.credits, hint);
     $('finPen').innerHTML = penaltyHtml(pen);
   } else paneFinished(racers);
   if (racers.every((q) => q.done)) {
     state = 'finish'; finishT = 0;
+    tut.end(); $('touch').classList.remove('hint');
     platform.gameplayStop(); noteRunEnd();
     if (racers.length === 1 && lastRun && lastRun.newMedal) platform.happytime();
     if (rally) rallyStageDone();
     else if (racers.length === 2) renderDuelResults(stage.def, racers, nextName);
   }
   setScreen();
+}
+
+// the first finish: one line under the medal; NEXT becomes the primary button (Retry stays one tap away)
+function finishTip(t) {
+  const el = $('finTip');
+  el.classList.toggle('hidden', !t);
+  $('finish').querySelector('.panel').classList.toggle('first-fin', !!t);
+  const next = !!t && t.next;
+  $('retryBtn').classList.toggle('primary', !next); $('nextBtn').classList.toggle('primary', next);
+  $('retryBtn').querySelector('.btn-key').textContent = next ? 'R' : 'Enter';
+  const nk = $('nextBtn').querySelector('.btn-key'); if (nk) nk.textContent = next ? 'Enter' : 'N';
+  if (!t) return;
+  const m = t.medal ? MEDAL[t.medal].name : null;
+  el.innerHTML = m
+    ? `<b>${m} medal!</b> Faster times win better medals \u2014 and credits upgrade your car in the Garage.`
+    : `<b>Finished!</b> Beat ${fmtShort(t.times.bronze)} for a bronze medal \u2014 and credits upgrade your car in the Garage.`;
 }
 
 // ---------------------------------------------------------------- rally (championship): a region's stages back to back
@@ -566,6 +658,8 @@ const settingsCtx = (from) => ({
   // Touch on touch-only devices, Gamepad when a pad is connected, otherwise Keyboard
   defaultCtl: () => (isTouch && !hasFinePointer ? 'touch' : connectedPads().length ? 'gamepad' : 'keyboard'),
   onMute: () => toggleMute(), onGhost: () => toggleGhost(), onNotes: () => { notesOn = !notesOn; store.set(NOTES_KEY, notesOn); },
+  autogas: () => autogas, onAutogas: () => { setAutogas(!autogas); setScreen(); },
+  tipsArmed: () => !tut.done, onTips: () => { tut.reset(false); },
   volume: (k) => getVolume(k),
   onVolume: (k, v, final) => { setVol(k, v); if (final && k === 'sfx') modeSounds()[0].beep(660, 0.09); }, // a soft preview blip
   onClose: () => setScreen(), // from Pause, closing shows the pause panel again (still paused)
@@ -639,6 +733,11 @@ function onAction(a, who = 0) {
     else if (['up', 'down', 'left', 'right'].includes(a)) settingsKey(a);
     return;
   }
+  if (sc === 'play' && tut.heroNow) { // first launch: PLAY (Enter / Space / A), Settings; nothing else to move between
+    if (a === 'confirm' || a === 'space' || a === 'activate' || a === 'start') startPick();
+    else if (a === 'back' || a === 'settings') openSettings(null);
+    return;
+  }
   if (sc === 'play') {
     if (a === 'up') pickEntry(-1);
     else if (a === 'down') pickEntry(1);
@@ -709,6 +808,13 @@ bindKeyboard((e) => {
 });
 window.addEventListener('pointerdown', () => document.body.classList.remove('kbnav'), { passive: true });
 bindTouch($('touch'), { onPress: resumeAudio, onReset: () => onAction('retry') });
+// phones: no page scroll, pull-to-refresh, pinch or double-tap zoom, long-press menu or text selection in the game;
+// the menu sheet, panels and settings still scroll with one finger
+const scrollsItself = (t) => !!(t && t.closest && t.closest('.menu-body, .panel, .settings-panel'));
+document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 || !scrollsItself(e.target)) e.preventDefault(); }, { passive: false });
+for (const ev of ['gesturestart', 'gesturechange', 'dblclick']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+document.addEventListener('contextmenu', (e) => { if (!(e.target.closest && e.target.closest('input, textarea'))) e.preventDefault(); });
+document.addEventListener('selectstart', (e) => { if (!(e.target.closest && e.target.closest('input, textarea'))) e.preventDefault(); });
 // gamepads: 0 -> P1, 1 -> P2 in a race; pad 0 alone drives the menus and panels
 const PAD = { 12: 'up', 13: 'down', 14: 'left', 15: 'right', 4: 'lb', 5: 'rb', 0: 'activate', 1: 'back', 2: 'next', 3: 'settings', 9: 'start', 8: 'view' };
 const onPadEdge = (k, b) => {
@@ -734,6 +840,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 $('startBtn').addEventListener('click', () => { if (state === 'menu') startPick(); });
+$('heroSkip').addEventListener('click', () => { tut.endHero(); if (state === 'menu') showMenu(true); });
 $('pauseBtn').addEventListener('click', () => { if (state === 'countdown' || state === 'race') setPaused(!paused); });
 $('resumeBtn').addEventListener('click', () => setPaused(false));
 $('restartBtn').addEventListener('click', () => { if (paused && !rally) startStage(stage.def.id); });
@@ -764,7 +871,10 @@ function stepPhysics(dt) {
     else if (state === 'countdown') input = HOLD;
     else if (p.done) input = { ...autopilot(car, stage), throttle: 0, brake: car.vf > 1 ? 0.55 : 0, hand: car.vf <= 1 }; // stop, never reverse
     else if (auto) { input = autopilot(car, stage); if (p.i === 1) input = { ...input, throttle: input.throttle * 0.86 }; }
-    else input = readInput(p.i, racers.length === 1);
+    else {
+      input = readInput(p.i, racers.length === 1);
+      if (autogas && racers.length === 1) input = autoGas(input, car, stage); // throttle unless braking (input only)
+    }
     car.step(dt, input, stage);
     if (state === 'race' && !p.done) { p.time += dt; if (p.rules) gateEvents(p, p.rules.update(car)); checkProgress(p); }
   }
@@ -840,12 +950,16 @@ function render() {
 let last = performance.now(), acc = 0;
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.1, Math.max(0, (now - last) / 1000)); last = now;
+  const rawMs = now - last;
+  const dt = Math.min(0.1, Math.max(0, rawMs / 1000)); last = now;
   if (!stage || breakActive()) return; // an ad break freezes the game (sim, sound, render)
+  // quality scaler: real play only (not paused, not hidden, not behind the loading veil)
+  if (!paused && !document.hidden && state !== 'boot' && $('loading').classList.contains('fade') && quality.sample(rawMs) >= 0) applyQuality();
   pollPads(onPadEdge);
   const running = !paused && state !== 'boot';
   if (running) {
     if (state === 'countdown') updateCountdown(dt);
+    updateTutorial(Math.min(0.25, rawMs / 1000)); // tips run on real time (a slow device must not keep them up longer)
     acc += dt;
     while (acc >= FIXED) { stepPhysics(FIXED); acc -= FIXED; }
     if (state === 'finish') {
@@ -913,7 +1027,8 @@ function frame(now) {
       ghost && ghostOn && state === 'race' ? ghostDelta : undefined);
     if (state === 'race' && !paused) hintsT += dt;
     // key hints: only for the first few runs (the full list lives in Settings > Controls)
-    $('hints').classList.toggle('show', state === 'race' && racers.length === 1 && hintsT < 6 && profile.stats.runs < 3);
+    // (not in a guided run: the coach marks explain the controls there)
+    $('hints').classList.toggle('show', state === 'race' && racers.length === 1 && hintsT < 6 && profile.stats.runs < 3 && !tut.run && !autogas);
   }
   const active = state !== 'menu' && state !== 'boot' && !paused;
   for (const s of allSounds()) {
@@ -986,6 +1101,14 @@ window.__game = {
   get times() { return racers.map((p) => p.time); },
   setAuto(b) { auto = !!b; },
   get adBreak() { return breakActive(); },
+  get tutorial() { return tut.state; },
+  resetTutorial(hero = true) { tut.reset(hero); if (state === 'menu') showMenu(true); return tut.state; },
+  get quality() { const L = qLevel(); return { mode: quality.fixed ? 'fixed' : 'auto', level: quality.level, name: L.name, pixelRatio: renderer.getPixelRatio(), shadows: sun.castShadow ? sun.shadow.mapSize.x : 0, draw: L.draw, dust: L.dust, ceiling: quality.ceiling, history: quality.history.slice() }; },
+  setQuality(level) { quality.set(level, 'test'); applyQuality(); return quality.level; },
+  get autogas() { return autogas; },
+  get assist() { return ASSIST; }, // tuning numbers of Auto accelerate (tests may change them)
+  setAutogas(on) { setAutogas(on); setScreen(); return autogas; },
+  get camera() { const p = racers[0], c = p.cam, v = c.fov * Math.PI / 180; return { fov: +c.fov.toFixed(2), aspect: +c.aspect.toFixed(3), hfov: +(2 * Math.atan(Math.tan(v / 2) * c.aspect) * 180 / Math.PI).toFixed(1), portrait: !!p.portrait, mode: CAMS[p.camMode].name }; },
   get audioMuted() { return allSounds()[0].muted; }, // what the speakers do (player setting, ad break or portal mute)
 };
 

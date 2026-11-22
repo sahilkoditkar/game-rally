@@ -11,6 +11,8 @@ const muteListeners = [];
 const notifyMute = () => { for (const f of muteListeners) { try { f(); } catch (e) { console.warn(e); } } };
 
 export const breakActive = () => active;
+let inAfter = false;
+export const afterBreak = () => inAfter; // true while naturalBreak's continuation runs straight after a break
 // audio must be silent: during a break, or while the portal says so (CrazyGames settings.muteAudio)
 export const forcedMute = () => active || portalMuted;
 export function onForcedMute(f) { muteListeners.push(f); }
@@ -69,7 +71,9 @@ export function naturalBreak(fn) {
   enter();
   platform.commercialBreak({
     onStart: () => notifyMute(),
-    onDone: () => { exit(); fn(); },
+    // fn runs in the same task as exit(): the screen still shows the break's veil, so a stage it loads can be built
+    // right away (afterBreak()) instead of after a loading frame, with no flash of the old panel in between
+    onDone: () => { exit(); inAfter = true; try { fn(); } finally { inAfter = false; } },
   });
 }
 

@@ -18,6 +18,7 @@ export class Dust {
     for (let i = 0; i < DUST_N; i++) this.mesh.setColorAt(i, col.setScalar(0.88 + Math.random() * 0.12));
     this.next = 0;
     this.lift = 1; this.lifeK = 1;
+    this.rate = 1; // quality scaler: fewer puffs on slow devices
     this.o = new THREE.Object3D();
   }
   // style per conditions: emissive lift keeps puffs airy by day; at night they dim, in rain they become darker, low spray
@@ -45,7 +46,7 @@ export class Dust {
     if (!car.grounded || car.speed < 1.5) { carry[0] = carry[1] = 0; return; }
     const sp = car.speed, slip = car.slip || 0, off = car.offroad || 0;
     // straight-line driving leaves a light trail; sliding (slip, drift) and verges throw much more
-    const rate = (sp * 0.45 + slip * slip * 0.9 + slip * 4) * (0.55 + off * 1.1) * (1 + 0.8 * (car.drift || 0)) * (1 + 1.6 * rough) * smoothstep(1.5, 6, sp);
+    const rate = (sp * 0.45 + slip * slip * 0.9 + slip * 4) * (0.55 + off * 1.1) * (1 + 0.8 * (car.drift || 0)) * (1 + 1.6 * rough) * smoothstep(1.5, 6, sp) * this.rate;
     for (let w = 0; w < 2; w++) {
       carry[w] += rate * dt;
       while (carry[w] >= 1) {

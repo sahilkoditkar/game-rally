@@ -5,7 +5,8 @@ import { $ } from './util.js';
 
 const CTL_TABS = [['keyboard', 'Keyboard'], ['gamepad', 'Gamepad'], ['touch', 'Touch']];
 const S = { open: false, focus: 0, ctl: 'keyboard', ctx: null, opener: null };
-// ctx: { muted(), ghostOn(), notesOn(), defaultCtl(), onMute(), onGhost(), onNotes(), onClose(), volume(kind), onVolume(kind, v, final) }
+// ctx: { muted(), ghostOn(), notesOn(), autogas(), tipsArmed(), defaultCtl(), onMute(), onGhost(), onNotes(), onAutogas(), onTips(),
+//        onClose(), volume(kind), onVolume(kind, v, final) }
 const VOLS = [['music', 'Music'], ['sfx', 'Effects']];
 
 const k = (...xs) => xs.map((x) => `<kbd>${x}</kbd>`).join('');
@@ -26,7 +27,7 @@ const CONTROLS = {
   ])}<div class="ctl-h">Menu</div>${table([
     ['Choose', 'd-pad'], ['Tabs', 'LB / RB'], ['Select / start', 'A'], ['Back', 'B'], ['Settings', 'Y'], ['Play / Garage', 'Select'], ['Next stage (results)', 'X'],
   ])}<p class="ctl-line">Pads: 1st → P1, 2nd → P2. Duel needs a keyboard or two gamepads.</p>`,
-  touch: () => `<p class="ctl-line touch-line">◀ ▶ steer on the left · GAS / BRAKE on the right · HAND for hairpins · RESET puts you back on the road · ‖ pauses</p>`,
+  touch: () => `<p class="ctl-line touch-line">◀ ▶ steer on the left (slide between them) · GAS / BRAKE on the right (no GAS with Auto accelerate) · HAND for hairpins · ↺ puts you back on the road · ‖ pauses</p>`,
 };
 
 const seg2 = (row, on) => `<div class="seg set-seg" role="radiogroup"><button class="seg-btn${on ? ' sel' : ''}" data-row="${row}" data-v="on" role="radio" aria-checked="${on}">On</button><button class="seg-btn${on ? '' : ' sel'}" data-row="${row}" data-v="off" role="radio" aria-checked="${!on}">Off</button></div>`;
@@ -40,6 +41,8 @@ export function renderSettings() {
     ${VOLS.map(([kind, name]) => volRow(kind, name, sound)).join('')}
     <div class="set-row" data-nav data-row="ghost"><span class="set-l">Ghost<small>Race your saved best run (solo only)</small></span>${seg2('ghost', ghost)}<kbd class="set-k">G</kbd></div>
     <div class="set-row" data-nav data-row="notes"><span class="set-l">Pace notes<small>Corner calls ahead of each bend</small></span>${seg2('notes', c.notesOn())}<span></span></div>
+    ${c.autogas ? `<div class="set-row" data-nav data-row="autogas"><span class="set-l">Auto accelerate<small>The car accelerates itself; you steer and brake</small></span>${seg2('autogas', c.autogas())}<span></span></div>` : ''}
+    ${c.onTips ? `<div class="set-row" data-nav data-row="tips"><span class="set-l">Tips<small>${c.tipsArmed() ? 'They show in your next race' : 'The short guide for new players'}</small></span><button class="seg-btn tips-btn${c.tipsArmed() ? ' sel' : ''}" data-tips>${c.tipsArmed() ? 'On' : 'Show again'}</button><span></span></div>` : ''}
     <div class="set-ctl" data-nav data-row="controls">
       <div class="set-ctl-head"><span class="set-l">Controls</span><div class="seg ctl-tabs" role="tablist">${CTL_TABS.map(([id, n]) => `<button class="seg-btn${S.ctl === id ? ' sel' : ''}" data-ctl="${id}" role="tab" aria-selected="${S.ctl === id}">${n}</button>`).join('')}</div></div>
       <div class="ctl-body">${CONTROLS[S.ctl]()}</div>
@@ -51,6 +54,7 @@ export function renderSettings() {
     r.addEventListener('input', () => { S.ctx.onVolume(kind, r.value / 100, false); paintVol(kind); }); // live while dragging
     r.addEventListener('change', () => { S.ctx.onVolume(kind, r.value / 100, true); paintVol(kind); r.blur(); }); // released
   }
+  for (const b of document.querySelectorAll('#setRows [data-tips]')) b.addEventListener('click', () => setRow('tips', true));
   for (const b of document.querySelectorAll('#setRows [data-ctl]')) b.addEventListener('click', () => { S.ctl = b.dataset.ctl; renderSettings(); });
   markFocus();
 }
@@ -77,6 +81,8 @@ function setRow(row, on) {
   if (row === 'sound' && on === c.muted()) c.onMute();
   if (row === 'ghost' && on !== c.ghostOn()) c.onGhost();
   if (row === 'notes' && on !== c.notesOn()) c.onNotes();
+  if (row === 'autogas' && on !== c.autogas()) c.onAutogas();
+  if (row === 'tips' && on && !c.tipsArmed()) c.onTips();
   renderSettings();
 }
 function markFocus() {
@@ -111,6 +117,8 @@ export function settingsKey(a) {
     else if (row === 'ghost') setRow('ghost', !S.ctx.ghostOn());
     else if (row === 'music' || row === 'sfx') { if (a !== 'activate') stepVol(row, a === 'left' ? -1 : 1); }
     else if (row === 'notes') setRow('notes', !S.ctx.notesOn());
+    else if (row === 'autogas') setRow('autogas', !S.ctx.autogas());
+    else if (row === 'tips') { if (a === 'activate' || a === 'right') setRow('tips', true); }
     else if (row === 'controls') stepCtl(a === 'left' ? -1 : 1);
     else if (row === 'done' && a === 'activate') closeSettings();
   }

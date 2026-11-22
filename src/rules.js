@@ -127,7 +127,9 @@ export class GateMarker {
     this.bursts = [-1, 1].map(() => { const s = new THREE.Sprite(this.burstMat); this.burst.add(s); return s; });
     scene.add(this.group, this.burst);
     this.t = 0; this.bt = 1; this._v = new THREE.Vector3();
+    this.emphT = 0; // s left of the first-run emphasis (bigger, brighter marker while the gates tip is up)
   }
+  emphasise(sec) { this.emphT = Math.max(this.emphT, sec); }
   setGate(g, stage) {
     this.gate = g;
     this.group.visible = !!g;
@@ -161,16 +163,20 @@ export class GateMarker {
     if (!this.group.visible || !cam) return;
     const d = cam.position.distanceTo(this.gemWrap.getWorldPosition(this._v));
     const px = (1.05 * 2) / (2 * d * Math.tan(((cam.fov || 50) * Math.PI) / 360)); // gem height / view height at scale 1
-    this.gemWrap.scale.setScalar(Math.max(1, GEM_MIN_PX / Math.max(px, 1e-4)));
+    const e = this.emphT > 0 ? 1 + 0.55 * Math.min(1, this.emphT) * (0.75 + 0.25 * Math.sin(this.t * 7)) : 1;
+    this.gemWrap.scale.setScalar(Math.max(1, GEM_MIN_PX / Math.max(px, 1e-4)) * e);
   }
   update(dt) {
     this.t += dt;
     if (this.group.visible) {
       this.gem.rotation.y = this.rim.rotation.y = this.t * 1.6;
       this.gemWrap.position.y = Math.sin(this.t * 2.4) * 0.25;
-      this.glowMat.opacity = 0.6 + 0.25 * Math.sin(this.t * 3.1);
-      this.sleeveMat.opacity = 0.42 + 0.18 * Math.sin(this.t * 3.1);
+      const e = Math.min(1, Math.max(0, this.emphT));
+      this.glowMat.opacity = 0.6 + 0.25 * Math.sin(this.t * 3.1) + 0.3 * e;
+      this.sleeveMat.opacity = 0.42 + 0.18 * Math.sin(this.t * 3.1) + 0.4 * e;
+      for (const g of this.glows) g.scale.setScalar(2.2 * (1 + 0.8 * e));
     }
+    if (this.emphT > 0) this.emphT -= dt;
     if (this.bt < BURST_T) { // advances even while the other pane is being drawn (duel)
       this.bt += dt;
       const k = this.bt / BURST_T;

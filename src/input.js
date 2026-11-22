@@ -54,20 +54,48 @@ export function bindKeyboard(onKey) {
     if (!e.repeat) onKey(e);
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
-  window.addEventListener('blur', () => { keys.clear(); for (const k in touchState) touchState[k] = false; });
+  window.addEventListener('blur', () => { keys.clear(); releaseTouch(); });
 }
 
-// touch (solo only): each control tracks its own set of pointers, so multi-touch works
+// touch (solo only). Each finger is tracked on its own (multi-touch), and a finger may slide between the controls
+// of its cluster without lifting: across the steer cluster the left / right half decides the direction; on the
+// pedal cluster the control under the finger counts (a gap keeps the last one). RESET acts on the press.
+const fingers = new Map(); // pointerId -> { zone, ctl }
+let touchRoot = null;
+function syncTouch() {
+  const on = new Set([...fingers.values()].map((f) => f.ctl));
+  for (const k in touchState) touchState[k] = on.has(k);
+  if (touchRoot) for (const el of touchRoot.querySelectorAll('[data-ctl]')) el.classList.toggle('on', on.has(el.dataset.ctl));
+  if (touchRoot) touchRoot.classList.toggle('active', fingers.size > 0);
+}
+function ctlAt(zone, x, y, fallback) {
+  if (zone.dataset.zone === 'steer') { const r = zone.getBoundingClientRect(); return x < r.left + r.width / 2 ? 'left' : 'right'; }
+  const hit = document.elementFromPoint(x, y), b = hit && hit.closest && hit.closest('[data-ctl]');
+  return b && zone.contains(b) ? b.dataset.ctl : fallback;
+}
+export function releaseTouch() { fingers.clear(); syncTouch(); }
 export function bindTouch(root, { onPress, onReset }) {
-  for (const el of root.querySelectorAll('[data-ctl]')) {
-    const ctl = el.dataset.ctl, ids = new Set();
-    const sync = () => { const on = ids.size > 0; el.classList.toggle('on', on); if (ctl in touchState) touchState[ctl] = on; };
-    el.addEventListener('pointerdown', (e) => {
+  touchRoot = root;
+  for (const zone of root.querySelectorAll('[data-zone]')) {
+    zone.addEventListener('pointerdown', (e) => {
+      const b = e.target.closest && e.target.closest('[data-ctl]');
+      if (!b || !zone.contains(b)) return;
       e.preventDefault(); onPress();
-      ids.add(e.pointerId); sync();
-      if (ctl === 'reset') onReset();
+      try { zone.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+      fingers.set(e.pointerId, { zone, ctl: ctlAt(zone, e.clientX, e.clientY, b.dataset.ctl) });
+      syncTouch();
     });
-    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(ev, (e) => { ids.delete(e.pointerId); sync(); });
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    zone.addEventListener('pointermove', (e) => {
+      const f = fingers.get(e.pointerId);
+      if (!f) return;
+      const c = ctlAt(zone, e.clientX, e.clientY, f.ctl);
+      if (c !== f.ctl) { f.ctl = c; syncTouch(); }
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) zone.addEventListener(ev, (e) => { if (fingers.delete(e.pointerId)) syncTouch(); });
   }
+  for (const el of root.querySelectorAll('[data-ctl=reset]')) {
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); onPress(); el.classList.add('on'); onReset(); });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(ev, () => el.classList.remove('on'));
+  }
+  root.addEventListener('contextmenu', (e) => e.preventDefault());
 }
