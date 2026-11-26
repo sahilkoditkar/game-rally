@@ -606,7 +606,7 @@ export class Car {
     this.aLat = 0; this.aLong = 0;   // low-passed accelerations (m/s^2), lateral +left
     this.drift = 0;                  // 0..1 player-initiated slide state
     this.drifting = false;           // in an arcade drift (handbrake-started; the autopilot never drifts)
-    this._dDir = 0; this._dFlip = 0; this._dRel = 0; this._dFlipAng = 0;
+    this._dDir = 0; this._dFlip = 0; this._dRel = 0; this._dFlipAng = 0; this._hbArm = 9;
     this.driftAngle = 0;             // signed angle velocity vs heading (rad)
     // interpolated render pose (what the group shows; use for cameras for jitter-free motion)
     this.rx = 0; this.ry = 0; this.rz = 0; this.ryaw = 0;
@@ -736,7 +736,7 @@ export class Car {
     this.airTime = 0; this.lastJump = null; this._droop = 0;
     this.impact = 0; this.rpm = 0.25; this.gear = 1; this.throttle = 0; this._thrAvg = 0;
     this.aLat = this.aLong = 0; this.drift = 0; this.driftAngle = 0;
-    this.drifting = false; this._dDir = 0; this._dFlip = 0; this._dRel = 0;
+    this.drifting = false; this._dDir = 0; this._dFlip = 0; this._dRel = 0; this._hbArm = 9;
     this._bRoll = this._bRollV = this._bPitch = this._bPitchV = this._bob = this._bobV = 0;
     this._prev.x = this.x; this._prev.y = this.y; this._prev.z = this.z; this._prev.yaw = this.yaw;
     this._vt = this.time;
@@ -792,6 +792,7 @@ export class Car {
     if (rr > 0) baseLat *= 1 - K.roughGrip * rr;
     let aLong = 0, aLat = 0;
     const beta = Math.atan2(vl, Math.abs(vf) + 1.5);
+    this._hbArm = hand ? 0 : this._hbArm + dt;
     // ---- arcade drift: started only by the player (handbrake + steer at speed), so normal driving and the autopilot
     // never reach this code. In a drift the car holds an angle while its velocity is pulled round the corner.
     if (this.drifting) {
@@ -807,10 +808,12 @@ export class Car {
       }
       const aNow = Math.abs(Math.atan2(vl, vf));
       const aligned = (this._dRel > 0.15 && aNow < 0.05) || (into < -0.3 && aNow < 0.09 && this._dFlip > 0.1 && !hand); // let go, or caught with opposite lock
-      if (!contact || rr > 0.5 || speed < DRIFT_OUT || vf < 2 || aligned || this._dRel > 0.9) {
+      // bumps and crests (short hops) don't end it; a real jump does
+      if ((!contact && this.airTime > 0.4) || speed < DRIFT_OUT || vf < 2 || aligned || this._dRel > 0.9) {
         this.drifting = false; this.drift = 0;
       }
-    } else if (hand && contact && rr < 0.5 && speed > DRIFT_MIN && vf > 5 && Math.abs(sN) > 0.3) {
+    } else if ((hand || this._hbArm < 0.3) && contact && rr < 0.5 && speed > DRIFT_MIN && vf > 5 && Math.abs(sN) > 0.3) {
+      // a handbrake pull starts it: steer with it, after it (within 0.3 s of a quick tap) or before it - any key order works
       this.drifting = true; this._dDir = Math.sign(sN); this._dFlip = 0; this._dRel = 0;
     }
     if (contact && this.drifting) {
@@ -830,11 +833,13 @@ export class Car {
       if (thr < 0.2) aTurn *= 1.1;
       if (hand) aTurn *= 1.1;
       if (realign) aTurn *= 0.25;
+      if (rr > 0) aTurn *= 1 - 0.4 * rr; // a drift that runs into the rough keeps going, but the loose ground pulls it round less
       const drive = thr * K.power * Math.max(0, 1 - V / K.vmax) * (rr > 0 ? 1 - K.roughSpin * rr : 1);
       let decel = K.roll + V * (0.03 + K.offDrag * off) + off * K.offFlat + K.driftScrub * Math.sin(ang);
       if (hand) decel += K.handDec + K.driftHandDec;
       if (thr < 0.05) decel += 1.1 + 0.025 * V;
       if (brk > 0) decel += brk * K.brake * 0.7;
+      if (rr > 0) decel += rr * (K.roughFlat + K.roughDrag * V + K.roughQuad * V * V) / grip;
       const V1 = Math.max(0, V + (drive * Math.cos(ang) - decel - 9.81 * slope * 0.7) * dt);
       const wv = dir * (aTurn + drive * Math.sin(ang)) / Math.max(V, 4);
       const a1 = a0 + wv * dt;
