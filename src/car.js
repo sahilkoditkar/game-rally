@@ -183,6 +183,8 @@ const JUMP_AIR = 0.2;        // s: flights longer than this are jumps (landing u
 const JUMP_REPORT = 0.22;    // s: flights longer than this are reported in car.lastJump (a size-1 kicker flies ~0.25 s)
 const LIP_CONV = 0.15;       // slope drop across the car (behind vs ahead) that marks a sharp kicker lip
 const HAIRPIN_CURV = 0.072;  // rad/m: corners tighter than ~14 m radius
+const DRIFT_MIN = 9.7;       // m/s (35 km/h): a handbrake pull while steering above this starts an arcade drift
+const DRIFT_OUT = 7;         // m/s (25 km/h): drifts end below this
 // physical footprint for collisions (independent of cosmetic parts)
 const PHYS = { wx: 0.82, wheelW: 0.26, wz: 1.25, wzR: 1.25 };
 
@@ -209,6 +211,11 @@ const BASE = Object.freeze({
   powerOS: 0,       // power-oversteer added on top of the loose-surface term
   holdMax: 0.45,    // drift state that throttle + steer can sustain
   driftLatLoss: 0.1,// lateral grip lost per unit drift
+  // arcade drift (entered with the handbrake while steering above DRIFT_MIN; see Car.step)
+  driftAngle: 0.33, driftAngleSteer: 0.2, driftAngleHand: 0.2, // held slip angle: base, + full steer into it, + handbrake held (rad)
+  driftTurn: 0.9, driftTurnSteer: 0.2, // lateral pull that curves the path in a drift, x grip (0.9 .. 1.1, plus power)
+  driftScrub: 3.2,  // speed scrubbed per unit sin(angle) (m/s^2)
+  driftHandDec: 2,  // extra scrub with the handbrake held
   slideCarry: 0.65, // share of the speed a slide would scrub that is kept (flow); half of that when off the throttle
   limitScrub: 0.03, // speed scrubbed while sliding past the grip limit (x maxLat m/s^2 per unit of saturation)
   gripReserve: 0.3, // extra lateral grip once the car slides a little (fully from ~8 deg)
@@ -598,6 +605,8 @@ export class Car {
     this.time = 0;
     this.aLat = 0; this.aLong = 0;   // low-passed accelerations (m/s^2), lateral +left
     this.drift = 0;                  // 0..1 player-initiated slide state
+    this.drifting = false;           // in an arcade drift (handbrake-started; the autopilot never drifts)
+    this._dDir = 0; this._dFlip = 0; this._dRel = 0; this._dFlipAng = 0;
     this.driftAngle = 0;             // signed angle velocity vs heading (rad)
     // interpolated render pose (what the group shows; use for cameras for jitter-free motion)
     this.rx = 0; this.ry = 0; this.rz = 0; this.ryaw = 0;
@@ -727,6 +736,7 @@ export class Car {
     this.airTime = 0; this.lastJump = null; this._droop = 0;
     this.impact = 0; this.rpm = 0.25; this.gear = 1; this.throttle = 0; this._thrAvg = 0;
     this.aLat = this.aLong = 0; this.drift = 0; this.driftAngle = 0;
+    this.drifting = false; this._dDir = 0; this._dFlip = 0; this._dRel = 0;
     this._bRoll = this._bRollV = this._bPitch = this._bPitchV = this._bob = this._bobV = 0;
     this._prev.x = this.x; this._prev.y = this.y; this._prev.z = this.z; this._prev.yaw = this.yaw;
     this._vt = this.time;
@@ -782,7 +792,62 @@ export class Car {
     if (rr > 0) baseLat *= 1 - K.roughGrip * rr;
     let aLong = 0, aLat = 0;
     const beta = Math.atan2(vl, Math.abs(vf) + 1.5);
-    if (contact) {
+    // ---- arcade drift: started only by the player (handbrake + steer at speed), so normal driving and the autopilot
+    // never reach this code. In a drift the car holds an angle while its velocity is pulled round the corner.
+    if (this.drifting) {
+      const into = sEff * this._dDir;
+      if (into > 0.5) this._dFlipAng = Math.abs(Math.atan2(vl, vf));     // the angle the drift was held at
+      this._dFlip = into < -0.6 ? this._dFlip + dt : 0;                 // held opposite lock
+      // not steering into the drift (released, or opposite lock / correction taps): realign and hand back. A leaky
+      // counter, so key taps into the turn don't keep a finished drift alive forever, and short eases don't end it
+      if (!hand && into < 0.2) this._dRel += dt; else this._dRel = Math.max(0, this._dRel - (hand ? 1 : 0.5) * dt);
+      // linking (S-bends): steer the other way and tap the handbrake again. Opposite lock alone only catches the slide.
+      if (hand && this._dFlip > 0.05 && speed > 12 && this._dFlipAng > 0.15) {
+        this._dDir = -this._dDir; this._dFlip = 0; this._dRel = 0;
+      }
+      const aNow = Math.abs(Math.atan2(vl, vf));
+      const aligned = (this._dRel > 0.15 && aNow < 0.05) || (into < -0.3 && aNow < 0.09 && this._dFlip > 0.1 && !hand); // let go, or caught with opposite lock
+      if (!contact || rr > 0.5 || speed < DRIFT_OUT || vf < 2 || aligned || this._dRel > 0.9) {
+        this.drifting = false; this.drift = 0;
+      }
+    } else if (hand && contact && rr < 0.5 && speed > DRIFT_MIN && vf > 5 && Math.abs(sN) > 0.3) {
+      this.drifting = true; this._dDir = Math.sign(sN); this._dFlip = 0; this._dRel = 0;
+    }
+    if (contact && this.drifting) {
+      const dir = this._dDir, into = sEff * dir;
+      const V = Math.hypot(vf, vl), a0 = Math.atan2(vl, vf); // velocity direction relative to the nose (+ = left)
+      const ang = Math.abs(a0);
+      // target angle: more with steer held into the drift and with the handbrake, less on opposite lock or off the throttle;
+      // looser surfaces hold a bigger angle
+      const realign = this._dRel > 0.12 && into > -0.6; // steering let go (not just eased): the nose swings back in line
+      let angT = K.driftAngle + K.driftAngleSteer * clamp(into, 0, 1) - 0.25 * clamp(-into, 0, 1);
+      if (hand) angT += K.driftAngleHand;
+      if (thr < 0.2) angT *= 0.7;
+      angT = realign ? 0 : clamp(angT * (1 + 0.5 * (1 - Math.min(1, grip))), 0.06, 0.9);
+      // the tyres pull the path round (tighter than grip cornering with the steer held in), and power along the nose,
+      // which points into the corner, pulls it round further
+      let aTurn = baseLat * (K.driftTurn + K.driftTurnSteer * clamp(into, 0, 1) - 1.0 * clamp(-into, 0, 1));
+      if (thr < 0.2) aTurn *= 1.1;
+      if (hand) aTurn *= 1.1;
+      if (realign) aTurn *= 0.25;
+      const drive = thr * K.power * Math.max(0, 1 - V / K.vmax) * (rr > 0 ? 1 - K.roughSpin * rr : 1);
+      let decel = K.roll + V * (0.03 + K.offDrag * off) + off * K.offFlat + K.driftScrub * Math.sin(ang);
+      if (hand) decel += K.handDec + K.driftHandDec;
+      if (thr < 0.05) decel += 1.1 + 0.025 * V;
+      if (brk > 0) decel += brk * K.brake * 0.7;
+      const V1 = Math.max(0, V + (drive * Math.cos(ang) - decel - 9.81 * slope * 0.7) * dt);
+      const wv = dir * (aTurn + drive * Math.sin(ang)) / Math.max(V, 4);
+      const a1 = a0 + wv * dt;
+      vf = V1 * Math.cos(a1); vl = V1 * Math.sin(a1);
+      // the nose leads the velocity by the target angle
+      const err = a1 + dir * angT;
+      let target = wv + (realign ? 12 : 7) * err;
+      if (Math.abs(a1) > 1.25) target += Math.sign(a1) * (Math.abs(a1) - 1.25) * 8; // never past ~70 deg
+      this.yawRate += (target - this.yawRate) * Math.min(1, 14 * dt);
+      this.drift = clamp(ang / 0.45, 0, 1);
+      aLat = dir * (aTurn + drive * Math.sin(ang));
+      aLong = (V1 - V) / dt;
+    } else if (contact) {
       // ---- longitudinal ----
       let drive = 0, decel = 0;
       if (vf > -1) drive += thr * K.power * Math.max(0, 1 - vf / K.vmax);
