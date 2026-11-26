@@ -24,8 +24,8 @@ try {
   check(!!ls['dustline.best.larch'], 'best time saved in localStorage', results);
   check(!!ls['dustline.profile'] && JSON.parse(ls['dustline.profile']).stats.runs === 1, 'profile saved in localStorage (1 run)', results);
   check(!Object.keys(ls).some((k) => k.includes('__')), 'no platform bookkeeping keys on web', results);
-  // Retry is instant on web (no break, no veil)
-  await page.keyboard.press('Enter');
+  // Retry is instant on web (no break, no veil). R, not Enter: on the very first finish (first-run guide) Enter is Next
+  await page.keyboard.press('KeyR');
   await until(page, () => window.__game.state === 'countdown', null, 30_000, 'retry countdown');
   check(await page.evaluate(() => !window.__game.adBreak && !document.getElementById('adVeil')), 'retry: no ad break on web', results);
   await page.keyboard.press('Escape'); await page.click('#pMenuBtn');

@@ -12,10 +12,10 @@ nothing is loaded from the network.
 
 | Action | Keyboard | Gamepad | Touch |
 | --- | --- | --- | --- |
-| Gas / brake (reverse) | `↑` `↓` or `W` `S` | RT / LT | GAS / BRAKE |
-| Steer | `←` `→` or `A` `D` | left stick | ◀ ▶ |
+| Gas / brake (reverse) | `↑` `↓` or `W` `S` | RT / LT | GAS / BRAKE (no GAS with Auto accelerate) |
+| Steer | `←` `→` or `A` `D` | left stick | ◀ ▶ (slide between them) |
 | Handbrake | `Space` | A | HAND |
-| Reset onto road | `R` | Y | RESET |
+| Reset onto road | `R` | Y | ↺ (top row) |
 | Camera (chase / far chase / low action) | `C` | | |
 | Pause | `Esc` | Start | ‖ button |
 | Sound / ghost on or off | `M` / `G` | | Settings |
@@ -25,6 +25,22 @@ nothing is loaded from the network.
 | Menu: Play / Garage | `V` | Select | tabs |
 | Menu: Solo / Duel | `1` / `2` | | SOLO / DUEL pill |
 | Results: retry / continue, next stage, menu | `Enter`, `N`, `Esc` | A, X, B | buttons |
+
+**Auto accelerate** (Settings): the car applies the throttle by itself and you steer, brake (braking past a stop
+still reverses) and use the handbrake. It works on the input only (`src/assist.js`): full throttle unless you brake,
+easing off (and at most a light brake) before tight corners, planned with a margin well under the car's grip so it
+is never quicker than driving yourself. Physics, gates, penalties, ghosts and medals are unchanged. It is on by
+default on touch-only devices and off elsewhere (saved as `dustline.autogas`).
+
+### First launch and tips
+
+The very first launch shows what the game is and one big **PLAY** (straight into the first stage); the full menu
+comes after the first finish or on the next visit (**Show all stages** skips to it). The first race shows four
+one-line tips at their moment, one at a time and each for about four seconds: the goal, how to drive on this device
+(keys, pad or the on-screen buttons, which pulse), the gates (as the first one approaches, its marker enlarged) and
+the pace notes (with the first call). The first finish panel adds one line on medals and credits and makes **Next**
+the main button. Tips can be skipped, are saved (`dustline.tutorial`) and come back with **Settings › Tips ›
+Show tips again**. Players with runs from before the guide existed never see it.
 
 The full list (keyboard, gamepad and touch) is in **Settings › Controls**, opened from the gear in the
 menu, `Esc` on the Play view, gamepad Y, or **Settings** in the pause panel. On every result panel `Enter`
@@ -169,7 +185,24 @@ Then open <http://localhost:8080/>.
 Handy URL parameters: `?stage=mesa` preselects a stage (an id, `daily`, or a 0-based index into
 the stage list), `?mode=duel` preselects split-screen duel, `?rally=forest` preselects a region's rally (with `&start=1` it jumps straight in), `?build=max|stock|<json>` and `?credits=N` try builds without touching your saved profile, `?start=1` skips the menu, and `?auto=1` lets
 the autopilot drive the race (both cars in a duel). `?cond=night,rain` forces conditions on any
-stage, for testing.
+stage, for testing. `?quality=low|med|high|auto` pins the render quality (default `auto`).
+The test hook `window.__game` also has `tutorial` (guide state), `resetTutorial()`, `quality` (level, pixel ratio,
+shadows, history) and `setQuality(n)`, `autogas` / `setAutogas(on)`, `camera` (fields of view) and `assist`.
+
+## Phones and quality
+
+On phones the race HUD is one slim top row (timer, progress bar with the gate count, reset, pause), with the speed
+small under the timer (portrait) or between the thumbs (landscape) and the pace notes top right; nothing stays over
+the middle of the road. Upright phones get their own chase cameras (higher, further back, aiming further up the road,
+with a vertical field of view wide enough for about 58° across) so the corners are on screen. Touch controls sit at
+the corners (≥ 64 px, dimmed when idle) inside the safe areas; page scroll, pull-to-refresh, pinch and double-tap
+zoom and the long-press menu are blocked in the game, and rotating mid-race keeps the race running.
+
+`src/quality.js` scales render quality from frame times: over 1.5 s windows, two slow windows (80th percentile frame
+over 24 ms) step one level down (pixel ratio 2 → 1.5 → 1.25 → 1, shadow map 2048 → 1024 → off, then shorter draw
+distance and fewer dust puffs); six smooth windows step one level up, and a step up that does not hold caps that
+level for the session, so it never oscillates. Touch devices start at `med`, others at `high`. `node tests/quality.test.mjs`
+feeds it simulated frame times.
 
 ## Platforms
 
@@ -195,7 +228,7 @@ The other modules each handle one part:
 | `player.js` | one racer: car, chase/orbit camera, viewport and timing |
 | `hud.js` | per-player HUD panes (fixed slots: timer + penalty chip, two sub-chips, rally and gate pills by the progress bar, OFF ROAD) and the result panels |
 | `menu.js` | main menu: top bar, Play / Garage tabs, region and Daily tabs (the tab is the selection), stage / rally / daily entries, the START label |
-| `settings.js` | the Settings overlay: sound, music / effects volume, ghost and the controls reference (keyboard / gamepad / touch) |
+| `settings.js` | the Settings overlay: sound, music / effects volume, ghost, pace notes, Auto accelerate, Tips and the controls reference (keyboard / gamepad / touch) |
 | `nav.js` | roving keyboard / gamepad focus on the pause and result panels |
 | `carapi.js` | the Rook's build API (upgrades, parts, paints) from car.js, with fallbacks |
 | `economy.js` | credits, the earn table, the saved profile and purchases |
@@ -204,7 +237,10 @@ The other modules each handle one part:
 | `rules.js` | gates, missed-gate and reset penalties, the next-gate marker |
 | `ghost.js` | ghost recording, compact storage codec, replay and the ghost-delta lookup |
 | `progress.js` | medals and medal points (derived from best times), rally pars, trophies and rally bests |
-| `input.js` | keyboard, gamepad and touch input |
+| `input.js` | keyboard, gamepad and touch input (touch: per-finger, sliding between a cluster's controls) |
+| `assist.js` | Auto accelerate: throttle unless braking, easing off before tight corners (input only) |
+| `tutorial.js` | the first-run guide: first-launch PLAY, coach marks, the first-finish line, saved state |
+| `quality.js` | the automatic quality scaler (levels, frame-time windows, hysteresis) |
 | `storage.js` | saved-data wrapper (through the platform storage facade) and best-time records |
 | `boot.js` | entry point: starts the platform layer, then `main.js` |
 | `adbreak.js` | mid-game ad breaks at natural pauses: policy, veil, mute, input block |

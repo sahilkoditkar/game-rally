@@ -6,12 +6,18 @@ import { angDiff, damp } from './util.js';
 import { createPane } from './hud.js';
 import { Headlights } from './fx.js';
 
+// portrait: tall, narrow panes (phones held upright) use their own numbers: higher and further back, aiming further
+// up the road, with a wide vertical field of view (set per aspect in main.js layout) so the horizontal view stays
+// generous and the car sits in the lower third. Landscape / desktop panes use the original numbers.
 export const CAMS = [
-  { name: 'CHASE', dist: 13, h: 7.5, look: 6 },
-  { name: 'HIGH', dist: 22, h: 15, look: 8 },
+  { name: 'CHASE', dist: 13, h: 7.5, look: 6, portrait: { dist: 11, h: 9.6, look: 17.5 } },
+  { name: 'HIGH', dist: 22, h: 15, look: 8, portrait: { dist: 16, h: 14, look: 22 } },
   // low, close action cam: aims well down the road, wider and a little wider still with speed, leans into slides
-  { name: 'ACTION', dist: 6.5, h: 2.4, look: 13.5, action: true, fov: 8, fovSpeed: 5, pullBack: 0.28 },
+  { name: 'ACTION', dist: 6.5, h: 2.4, look: 13.5, action: true, fov: 8, fovSpeed: 5, pullBack: 0.28, portrait: { dist: 7.5, h: 3.6, look: 18, fov: 2, fovSpeed: 3 } },
 ];
+// the portrait chase view keeps at least this horizontal field of view (degrees); main.js derives the vertical one
+export const PORTRAIT_HFOV = 58, PORTRAIT_VFOV_MAX = 100;
+const presetFor = (p) => { const c = CAMS[p.camMode] || CAMS[0]; return p.portrait && c.portrait ? (c._pm || (c._pm = { ...c, ...c.portrait })) : c; };
 // every player drives the Rook; a player's look/performance is a build (see carapi.js / economy.js)
 export class Player {
   constructor(i, scene, panesEl) {
@@ -90,7 +96,7 @@ export function updateCamera(p, dt, stage, orbitMode) {
     _l.set(car.x, car.y + (garage ? 0.7 : 0.8), car.z);
     p.camYaw = car.yaw;
   } else {
-    const c = CAMS[p.camMode] || CAMS[0], sp = phys.speed;
+    const c = presetFor(p), sp = phys.speed;
     let fx = Math.sin(car.yaw), fz = Math.cos(car.yaw);
     if (sp > 3) {
       // follow the velocity direction only when rolling forwards (reversing would swing the camera round)
@@ -111,8 +117,8 @@ export function updateCamera(p, dt, stage, orbitMode) {
     _l.set(car.x + sx * c.look, cy + 0.8, car.z + sz * c.look);
   }
   // per-preset field of view on top of the pane's base (set in layout), eased; the action cam widens with speed
-  const preset = !orbitMode ? CAMS[p.camMode] || CAMS[0] : null;
-  const baseFov = cam.userData.baseFov || cam.fov;
+  const preset = !orbitMode ? presetFor(p) : null;
+  const baseFov = (preset && p.portrait && cam.userData.portraitFov) || cam.userData.baseFov || cam.fov;
   const fovT = baseFov + (preset ? (preset.fov || 0) + (preset.fovSpeed || 0) * clamp(phys.speed / 40, 0, 1) : 0);
   if (cam.userData.baseFov == null) cam.userData.baseFov = cam.fov;
   const fov = p.camSnap ? fovT : cam.fov + (fovT - cam.fov) * damp(4, dt);

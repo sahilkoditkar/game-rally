@@ -103,8 +103,23 @@ export function renderMenu(ctx) {
   if (duel) $('p2Link').addEventListener('click', () => ctx.onP2());
   $('menu').classList.toggle('duel', duel);
   $('menu').classList.toggle('garage-view', garage);
+  // first launch: what the game is, and one big PLAY (the full menu comes after the first finish or next visit)
+  const first = !!ctx.firstRun && !garage && !duel;
+  $('menu').classList.toggle('first-run', first);
+  $('heroSec').classList.toggle('hidden', !first);
+  $('heroSkip').classList.toggle('hidden', !first);
   $('garageSec').classList.toggle('hidden', !garage);
-  $('stagesSec').classList.toggle('hidden', garage);
+  $('stagesSec').classList.toggle('hidden', garage || first);
+  if (first) {
+    const def = getDef(pick.entry === 'rally' ? rallyStages(pick.tab)[0] : pick.entry);
+    $('heroLine').innerHTML = def ? `${def.id === REGIONS[0].stages[0] ? 'First stage \u00b7 ' : ''}${esc(def.name)} \u00b7 ${fmtKm(lengthOf(def))}` : '';
+    $('startBtn').innerHTML = '<span class="st-verb">Play</span><span class="btn-key">Enter</span>';
+    $('startBtn').setAttribute('aria-label', 'Play' + (def ? ' ' + def.name : ''));
+    $('startBtn').classList.remove('long');
+    $('startBtn').classList.add('play-btn');
+    return;
+  }
+  $('startBtn').classList.remove('play-btn');
 
   // START names what it starts (same in PLAY and GARAGE)
   const [verb, what] = startLabel(pick, duel);

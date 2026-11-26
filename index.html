@@ -28,21 +28,22 @@
 
   <div id="countdown" class="countdown"></div>
 
-  <!-- ===== Touch controls ===== -->
+  <!-- ===== Touch controls (solo): thumbs at the corners; GAS goes when Auto accelerate is on ===== -->
   <div id="touch" class="touch hidden">
-    <div class="t-left">
-      <button class="t-btn t-steer" data-ctl="left" aria-label="Steer left">&#9664;</button>
-      <button class="t-btn t-steer" data-ctl="right" aria-label="Steer right">&#9654;</button>
+    <div class="t-zone t-left" data-zone="steer">
+      <button class="t-btn t-steer" data-ctl="left" aria-label="Steer left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 4.5 7 12l8.5 7.5z" fill="currentColor"/></svg></button>
+      <button class="t-btn t-steer" data-ctl="right" aria-label="Steer right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 4.5 17 12l-8.5 7.5z" fill="currentColor"/></svg></button>
     </div>
-    <div class="t-right">
-      <div class="t-small">
-        <button class="t-btn t-mini" data-ctl="reset" aria-label="Reset">RESET</button>
-        <button class="t-btn t-mini" data-ctl="hand" aria-label="Handbrake">HAND</button>
-      </div>
-      <button class="t-btn t-brake" data-ctl="brake">BRAKE</button>
-      <button class="t-btn t-gas" data-ctl="gas">GAS</button>
+    <div class="t-zone t-right" data-zone="pedals">
+      <button class="t-btn t-hand" data-ctl="hand" aria-label="Handbrake">HAND</button>
+      <button class="t-btn t-brake" data-ctl="brake" aria-label="Brake">BRAKE</button>
+      <button class="t-btn t-gas" data-ctl="gas" aria-label="Gas">GAS</button>
     </div>
+    <button class="t-btn t-reset" data-ctl="reset" aria-label="Reset onto the road"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5a7 7 0 1 1-6.6 4.7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M3.2 4.6l2.4 5.6 5.6-2.4z" fill="currentColor"/></svg></button>
   </div>
+
+  <!-- ===== Coach marks (first-run guide, one line at a time) ===== -->
+  <div id="coach" class="coach" aria-live="polite"><span class="coach-txt" id="coachTxt"></span><button class="coach-skip" id="coachSkip" aria-label="Skip tips">Skip tips</button></div>
 
   <!-- ===== Menu ===== -->
   <div id="menu" class="menu hidden">
@@ -70,6 +71,13 @@
         <div class="mode-note" id="modeNote"></div>
 
         <!-- garage: tune and style the Rook (rendered by garage.js) -->
+        <!-- first launch: what the game is, and one PLAY (the full menu comes after the first finish / next visit) -->
+        <section class="menu-sec hero-sec hidden" id="heroSec">
+          <div class="hero-kicker">Rally time trial</div>
+          <div class="hero-title">Race the stage.<br>Beat the clock.</div>
+          <div class="hero-line" id="heroLine"></div>
+        </section>
+
         <section class="menu-sec garage-sec hidden" id="garageSec"></section>
 
         <section class="menu-sec stages-sec" id="stagesSec">
@@ -81,6 +89,7 @@
         <!-- pinned to the bottom of the scrolling sheet: START names what it starts -->
         <div class="menu-foot">
           <button class="btn primary big start-btn" id="startBtn">Start</button>
+          <button class="link-btn hero-skip hidden" id="heroSkip">Show all stages</button>
         </div>
       </div>
       <div class="notice alt menu-toast" id="menuToast"></div>
@@ -109,6 +118,7 @@
       <div class="fin-best" id="finBest"></div>
       <div class="fin-pen" id="finPen"></div>
       <div class="fin-medal" id="finMedal"></div>
+      <div class="fin-tip hidden" id="finTip"></div>
       <div class="fin-earn" id="finEarn"></div>
       <table class="splits" id="finSplits"></table>
       <div class="panel-btns res-btns">
