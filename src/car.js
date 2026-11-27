@@ -75,7 +75,7 @@ export const UPGRADES = [
 // per-level handling values (index = level). Level 0 is exactly the stock Rook.
 const TUNE = {
   engine: { power: [13, 13.75, 14.5, 15.35], vmax: [52, 54, 56.5, 59] },
-  tyres: { grip: [1.12, 1.16, 1.2, 1.24], offGripLoss: [0.25, 0.21, 0.17, 0.13], traction: [16, 17.5, 19, 20.5], powerOS: [0, -0.03, -0.06, -0.09] },
+  tyres: { grip: [1, 1.035, 1.07, 1.105], offGripLoss: [0.25, 0.21, 0.17, 0.13], traction: [16, 17.5, 19, 20.5], powerOS: [0, -0.03, -0.06, -0.09] },
   brakes: { brake: [17, 19.5, 22, 24.5], tractionBrake: [16, 20, 24.5, 29.5] },
   suspension: {
     offDrag: [0.17, 0.15, 0.13, 0.11], offFlat: [1.2, 1.05, 0.9, 0.75],
@@ -84,7 +84,7 @@ const TUNE = {
     // deep rough (>3.5 m beyond the road edge, fully applied from 9 m)
     roughFlat: [0.3, 0.223, 0.172, 0.14], roughDrag: [0.02, 0.0149, 0.0114, 0.0094], roughQuad: [0.0032, 0.00235, 0.00181, 0.00148],
     roughSpin: [0.3, 0.27, 0.24, 0.21],
-    roughGrip: [0.26, 0.23, 0.205, 0.18], roughBrake: [0.5, 0.45, 0.4, 0.35], roughJolt: [0.5, 0.42, 0.34, 0.25], // roughGrip: base grip rose 12%, same absolute grip in the rough as before
+    roughGrip: [0.17, 0.14, 0.11, 0.08], roughBrake: [0.5, 0.45, 0.4, 0.35], roughJolt: [0.5, 0.42, 0.34, 0.25],
     landYaw: [1, 0.8, 0.6, 0.4],
   },
 };
@@ -199,19 +199,15 @@ const BASE = Object.freeze({
   latStiff: 14,     // how hard the tyres pull the velocity back to the heading (1/s)
   wb: 2.5,          // physics wheelbase (kinematic yaw)
   lock0: 0.55, lockDrop: 0.40,         // max steer angle = lock0 - lockDrop * min(1, v/42)
-  steerIn: 9, steerInDrop: 4, steerOut: 12, // normalised steering ramp rates (1/s)
-  steerCurve: 0.6, // response curve: 0 = linear; higher = a short tap asks for proportionally less turn
-  yawMargin: 1.25,  // yaw authority beyond the grip limit: asking for more turn than the tyres hold rotates the car into a slide
-  driftYaw: 1.1,    // extra yaw authority per unit of drift state
+  steerIn: 5.5, steerInDrop: 2.5, steerOut: 9, // normalised steering ramp rates (1/s)
+  yawMargin: 1.06,  // yaw authority beyond the grip limit with no slide (1 = pure carve)
+  driftYaw: 1.5,    // extra yaw authority per unit of drift state
   handYaw: 1.8, handLat: 0.55, // handbrake yaw bonus / lateral grip factor
-  liftOff: 0.4, liftRate: 1.4, // lift-off oversteer target and build rate
-  trail: 0.35,      // trail-brake rotation target
+  liftOff: 0.7, liftRate: 2.2, // lift-off oversteer target and build rate
+  trail: 0.4,       // trail-brake rotation target
   powerOS: 0,       // power-oversteer added on top of the loose-surface term
-  holdMax: 0.45,    // drift state that throttle + steer can sustain
-  driftLatLoss: 0.1,// lateral grip lost per unit drift
-  slideCarry: 0.65, // share of the speed a slide would scrub that is kept (flow); half of that when off the throttle
-  limitScrub: 0.03, // speed scrubbed while sliding past the grip limit (x maxLat m/s^2 per unit of saturation)
-  gripReserve: 0.3, // extra lateral grip once the car slides a little (fully from ~8 deg)
+  holdMax: 0.6,     // drift state that throttle + steer can sustain
+  driftLatLoss: 0.2,// lateral grip lost per unit drift
   alignBase: 1.45, alignHold: 0.8, assist: 1.2, // self-aligning / counter-steer assist
   betaLim: 0.75,    // slide angle where the anti-spin pull-back starts (rad)
   betaLimDrift: 0,  // extra slide angle allowed per unit drift state
@@ -225,7 +221,7 @@ const BASE = Object.freeze({
   // deep rough beyond the verge (weight r = 0 at 3.5 m past the road edge .. 1 from 9 m)
   roughFlat: 0.3, roughDrag: 0.02, roughQuad: 0.0032, // extra drag: flat m/s^2, per m/s and per (m/s)^2 (hard at speed)
   roughSpin: 0.3,   // drive lost to wheelspin
-  roughGrip: 0.26,  // extra lateral grip lost (on top of offGripLoss)
+  roughGrip: 0.17,  // extra lateral grip lost (on top of offGripLoss)
   roughBrake: 0.5,  // brake force lost
   roughJolt: 0.5,   // yaw jostle from bumps, rad/s at speed
   landYaw: 1,       // how much a crooked or one-sided jump landing twists the car
@@ -269,7 +265,7 @@ export function buildStats(build) {
   const stats = {
     speed: map(p.top, STOCK_PERF.top, MAX_PERF.top),
     accel: map(-p.t100, -STOCK_PERF.t100, -MAX_PERF.t100),
-    grip: lo + (hi - lo) * (0.6 * span01(h.grip, 1.12, 1.24) + 0.2 * span01(-h.offGripLoss, -0.25, -0.13) + 0.2 * span01(h.traction, 16, 20.5)),
+    grip: lo + (hi - lo) * (0.6 * span01(h.grip, 1, 1.105) + 0.2 * span01(-h.offGripLoss, -0.25, -0.13) + 0.2 * span01(h.traction, 16, 20.5)),
     braking: lo + (hi - lo) * (0.7 * span01(-p.brakeDist, -STOCK_PERF.brakeDist, -MAX_PERF.brakeDist) + 0.3 * span01(h.tractionBrake, 16, 29.5)),
     composure: lo + (hi - lo) * (0.5 * span01(p.roughTop, STOCK_PERF.roughTop, MAX_PERF.roughTop) + 0.2 * span01(-h.roughJolt, -0.5, -0.25)
       + 0.15 * span01(-h.landLoss, -0.015, -0.006) + 0.15 * span01(-h.scrub, -0.06, -0.03)),
@@ -773,7 +769,6 @@ export class Car {
     const rate = into ? K.steerIn - K.steerInDrop * sp01 : K.steerOut;
     this._sIn += clamp(sIn - s0, -rate * dt, rate * dt);
     const sN = this._sIn;
-    const sEff = sN * (1 - K.steerCurve + K.steerCurve * Math.abs(sN)); // taps ask for a little, a held key for full lock
     const maxSteer = K.lock0 - K.lockDrop * Math.min(1, speed / 42);
     this.steer = sN * maxSteer;
 
@@ -825,28 +820,15 @@ export class Car {
       let maxLat = baseLat * (1 - 0.25 * use * use) * (1 - K.driftLatLoss * d);
       if (hand) maxLat *= K.handLat;
       if (thr > 0.5 && d > 0.2 && Math.abs(vl) > 1.5) maxLat *= 0.9;
-      // grip reserve: a car turned in past the limit finds extra bite once it is sliding a little, so asking for too
-      // much turn (a corner taken too fast, a held key) tightens the line in a controllable slide instead of ploughing on
-      if (!hand && K.gripReserve) maxLat *= 1 + K.gripReserve * (1 - rr) * smoothstep(0.03, 0.14, Math.abs(beta)); // not in the deep rough
       aLat = clamp(-vl * K.latStiff, -maxLat, maxLat);
-      const vl0 = vl;
       vl += aLat * dt;
-      // a slide keeps much of its speed (more on throttle): the tyres turn the velocity rather than only cancel its
-      // sideways part. But a car asked to turn well past what the tyres hold scrubs speed until it can follow -
-      // the forgiving part: arrive too fast, keep the key held, and it slows into the corner instead of flying off.
-      if (vf > 3 && Math.abs(vl0) > 0.3 && !hand) {
-        const lostSq = vl0 * vl0 - vl * vl;
-        if (lostSq > 0) vf = Math.sqrt(vf * vf + lostSq * K.slideCarry * (0.5 + 0.5 * Math.min(1, thr / 0.7)));
-        const sat = clamp(Math.abs(vl0) * K.latStiff / Math.max(1, maxLat) - 1, 0, 2);
-        if (sat > 0) vf = Math.max(0, vf - K.limitScrub * sat * maxLat * dt);
-      }
 
       // ---- yaw: proportional to steering, speed-limited near the grip limit ----
       const av = Math.max(Math.abs(vf), 4);
       const wKin = Math.abs(vf) * Math.tan(maxSteer) / K.wb;
       const wGrip = baseLat / av * (K.yawMargin + K.driftYaw * d + (hand ? K.handYaw : 0));
       const wMax = Math.min(wKin * (hand ? 1.35 : 1), wGrip);
-      let target = sEff * wMax * Math.sign(vf || 1);
+      let target = sN * wMax * Math.sign(vf || 1);
       // self-aligning toward the velocity; weaker while a slide is held on throttle,
       // stronger (counter-steer assist) when the player isn't steering into the slide
       const intoSlide = sN !== 0 && Math.sign(sN) === -Math.sign(beta);
